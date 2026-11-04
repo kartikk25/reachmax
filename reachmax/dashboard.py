@@ -48,6 +48,29 @@ def _resolve_config_file() -> Path:
     except ConfigFileNotFoundError:
         return CONFIG_FILE
 
+
+def _mailbox_config_document() -> tuple[Path, dict, list[dict]]:
+    path = _resolve_config_file()
+    document = yaml.safe_load(read_user_text(path)) or {}
+    email = document.setdefault("channels", {}).setdefault("email", {})
+    return path, document, email.setdefault("mailboxes", [])
+
+
+def _save_mailbox_config(path: Path, document: dict) -> None:
+    """Atomically persist non-secret YAML mailbox settings."""
+    payload = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".reachmax-config-", suffix=".yaml", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
 # No /docs, /redoc or /openapi.json: the API is for this UI only, and every
 # route except the static shell needs the token (see dashboard_auth).
 app = FastAPI(title="Reach Max Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
@@ -1241,6 +1264,73 @@ async def list_mailboxes():
         missing_compliance.append("Set compliance.opt_out_line to enable cold email.")
     return {"mailboxes": result, "events": events,
             "cold_send_block_reason": " ".join(missing_compliance)}
+
+
+@app.post("/api/mailboxes")
+async def create_mailbox(request: Request):
+    from reachmax.config import MailboxConfig, load_config
+    from reachmax.mailboxes import MailboxRegistry
+    try:
+        values = await request.json()
+        mailbox = MailboxConfig.model_validate(values)
+        path, document, pool = _mailbox_config_document()
+        if not pool and mailbox.id == "default":
+            return JSONResponse({"error": "default is reserved for legacy single-mailbox mode"},
+                                status_code=409)
+        if any(entry.get("id") == mailbox.id for entry in pool):
+            return JSONResponse({"error": "mailbox id already exists"}, status_code=409)
+        if any(str(entry.get("address", "")).lower() == mailbox.address for entry in pool):
+            return JSONResponse({"error": "sender address already exists"}, status_code=409)
+        pool.append(mailbox.model_dump(mode="json", exclude_none=True))
+        # Parse the full model before replacing the active file.
+        document["channels"]["email"]["mailboxes"] = pool
+        temp = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+        from reachmax.config import ReachMaxConfig
+        ReachMaxConfig.model_validate(yaml.safe_load(temp))
+        _save_mailbox_config(path, document)
+        config = load_config(str(path))
+        state = _state()
+        await state.init_db()
+        await MailboxRegistry(config).sync(state)
+        return {"success": True, "mailbox_id": mailbox.id}
+    except Exception as e:
+        logger.warning(f"Mailbox configuration validation failed: {type(e).__name__}")
+        return JSONResponse({"error": "Invalid mailbox configuration; check the id, address, provider, cap, and window."},
+                            status_code=400)
+
+
+@app.patch("/api/mailboxes/{mailbox_id}")
+async def edit_mailbox(mailbox_id: str, request: Request):
+    from reachmax.config import MailboxConfig, load_config, ReachMaxConfig
+    from reachmax.mailboxes import MailboxRegistry
+    try:
+        changes = await request.json()
+        allowed = {"label", "address", "from_name", "provider", "max_daily_sends",
+                   "warmup", "weight", "enabled", "send_window", "timezone",
+                   "max_bounce_rate"}
+        if not isinstance(changes, dict) or set(changes) - allowed:
+            return JSONResponse({"error": "unsupported mailbox field"}, status_code=400)
+        path, document, pool = _mailbox_config_document()
+        index = next((i for i, entry in enumerate(pool) if entry.get("id") == mailbox_id), None)
+        if index is None:
+            return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+        values = MailboxConfig.model_validate({**pool[index], **changes, "id": mailbox_id})
+        if any(i != index and str(entry.get("address", "")).lower() == values.address
+               for i, entry in enumerate(pool)):
+            return JSONResponse({"error": "sender address already exists"}, status_code=409)
+        pool[index] = values.model_dump(mode="json", exclude_none=True)
+        document["channels"]["email"]["mailboxes"] = pool
+        ReachMaxConfig.model_validate(yaml.safe_load(yaml.safe_dump(document, sort_keys=False)))
+        _save_mailbox_config(path, document)
+        config = load_config(str(path))
+        state = _state()
+        await state.init_db()
+        await MailboxRegistry(config).sync(state)
+        return {"success": True, "mailbox_id": mailbox_id}
+    except Exception as e:
+        logger.warning(f"Mailbox configuration update failed: {type(e).__name__}")
+        return JSONResponse({"error": "Invalid mailbox configuration; check the id, address, provider, cap, and window."},
+                            status_code=400)
 
 
 @app.post("/api/mailboxes/{mailbox_id}/test")

@@ -464,6 +464,7 @@ async function loadMailboxes() {
         '<td>' + (m.warmup_days_to_ramp ? Number(m.warmup_days_to_ramp) + ' days to ramp' : 'At current cap') + '</td>' +
         '<td>' + escHtml(m.next_send_slot || 'Open') + '</td><td>' +
         '<button class="btn btn-secondary btn-sm" onclick="mailboxTest(' + jsq(m.id) + ')">Test</button> ' +
+        '<button class="btn btn-secondary btn-sm" onclick="mailboxEdit(' + jsq(m.id) + ',' + jsq(m.label) + ',' + jsq(m.from_name) + ',' + Number(m.max_daily_sends) + ')">Edit</button> ' +
         (m.status === 'paused' || m.status === 'error' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'resume\')">Resume</button>' :
           m.status === 'active' || m.status === 'warming' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'pause\')">Pause</button>' : '') + '</td></tr>').join('') +
       '</tbody></table></div>';
@@ -484,6 +485,42 @@ async function mailboxTest(id) {
   const result = await api('/api/mailboxes/' + encodeURIComponent(id) + '/test', {method: 'POST'});
   if (result && result.success) showToast(result.detail || 'Connection check passed.');
   else showToast(result && result.detail ? result.detail : 'Connection check failed.', 'error');
+}
+
+async function mailboxAdd() {
+  const id = (prompt('Mailbox ID (short slug):') || '').trim();
+  if (!id) return;
+  const label = (prompt('Mailbox label:', id) || '').trim();
+  const address = (prompt('Sender email address:') || '').trim();
+  const from_name = (prompt('Real sender name:') || '').trim();
+  const provider = (prompt('Provider: gmail, microsoft, or smtp', 'gmail') || '').trim().toLowerCase();
+  const max_daily_sends = Number(prompt('Daily send cap:', '40'));
+  if (!label || !address || !from_name || !Number.isInteger(max_daily_sends)) {
+    showToast('Mailbox details are incomplete.', 'error'); return;
+  }
+  const result = await api('/api/mailboxes', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id, label, address, from_name, provider, max_daily_sends})});
+  if (result && result.success) { showToast('Mailbox added. Configure its credentials in .env.'); loadMailboxes(); }
+  else showToast(failMsg(result, 'Mailbox could not be added.'), 'error');
+}
+
+async function mailboxEdit(id, oldLabel, oldName, oldCap) {
+  const label = prompt('Mailbox label:', oldLabel);
+  if (label === null) return;
+  const from_name = prompt('Real sender name:', oldName);
+  if (from_name === null) return;
+  const cap = prompt('Daily send cap:', String(oldCap));
+  if (cap === null) return;
+  const max_daily_sends = Number(cap);
+  if (!label.trim() || !from_name.trim() || !Number.isInteger(max_daily_sends)) {
+    showToast('Mailbox details are invalid.', 'error'); return;
+  }
+  const result = await api('/api/mailboxes/' + encodeURIComponent(id), {method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({label: label.trim(), from_name: from_name.trim(), max_daily_sends})});
+  if (result && result.success) { showToast('Mailbox updated.'); loadMailboxes(); }
+  else showToast(failMsg(result, 'Mailbox could not be updated.'), 'error');
 }
 
 try { selectedMailbox = localStorage.getItem('reachmax-mailbox-view') || ''; } catch { /* ignore */ }

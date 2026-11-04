@@ -132,6 +132,27 @@ def test_mailbox_api_is_secret_free_and_can_pause_one_mailbox(authed, monkeypatc
     assert "fake-secret-token" not in tested.text
 
 
+def test_dashboard_can_add_and_edit_mailbox_config(authed, monkeypatch, env):
+    import reachmax.dashboard as dash
+
+    source = Path(__file__).parents[1] / "reachmax.yaml"
+    active = env["dir"] / "reachmax.yaml"
+    active.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(dash, "_resolve_config_file", lambda: active)
+    created = authed.post("/api/mailboxes", json={
+        "id": "sales_a", "label": "Sales A", "provider": "gmail",
+        "address": "alex@example.test", "from_name": "Alex Rivera",
+        "max_daily_sends": 30,
+    })
+    assert created.status_code == 200 and created.json()["success"]
+    updated = authed.patch("/api/mailboxes/sales_a", json={"label": "Sales West", "max_daily_sends": 35})
+    assert updated.status_code == 200 and updated.json()["success"]
+    shown = authed.get("/api/mailboxes").json()["mailboxes"]
+    assert len(shown) == 1 and shown[0]["label"] == "Sales West"
+    encoded = active.read_text(encoding="utf-8").lower()
+    assert "password" not in encoded and "client_secret" not in encoded
+
+
 # ── Every API route needs the token ──
 
 
