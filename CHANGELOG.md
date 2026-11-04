@@ -1,9 +1,10 @@
 # Changelog
 
-Notable changes to Harvey. Dates are release dates; the format follows
+Notable changes to Reach Max. Entries before the Reach Max fork record the
+inherited Harvey release history. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely and versions
-follow [semver](https://semver.org/), with the caveat that Harvey is pre-1.0 and
-minor versions can still change behaviour.
+follow [semver](https://semver.org/), with the caveat that Reach Max is pre-1.0
+and minor versions can still change behaviour.
 
 ## [Unreleased]
 
@@ -32,7 +33,7 @@ minor versions can still change behaviour.
 - Added CLI mailbox management, mailbox-specific environment examples, completed the multi-mailbox guide/README, validated mailbox/fixed timezone selection, and added per-mailbox authentication errors and rate-limit cooldowns. `pip install -e .`, CLI help/list, JavaScript syntax, and Python compilation pass; Docker verification is unavailable because Docker is not installed in this environment.
 - Final test run on Python 3.14: 2,829 passed, 184 skipped.
 - Follow-up fix: persist mailbox ids on new conversations and mailbox-related handler actions so dashboard filtering includes those records; focused regression run: 80 passed.
-- Mailbox self-test now verifies inbox access and provider send acceptance by sending a tagged message only to the mailbox's own address; the dashboard labels this action Self-test and the docs explain its effect. Full suite: 2,855 passed, 184 skipped.
+- Mailbox self-test checks inbox access and provider send acceptance by sending a tagged message only to the mailbox's own address; the dashboard labels this action Self-test and the docs explain its effect. Full suite before final error hardening: 2,855 passed, 184 skipped; focused suite after it: 273 passed, 10 skipped.
 
 ### Added
 
