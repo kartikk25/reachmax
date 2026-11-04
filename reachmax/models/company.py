@@ -12,6 +12,7 @@ def _utcnow() -> datetime:
 
 class Company(BaseModel):
     id: str = ""
+    mailbox_id: str | None = None  # one sending identity per company
     name: str = ""
     domain: str = ""
     website: str = ""

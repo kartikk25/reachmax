@@ -519,6 +519,39 @@ MIGRATIONS: list[str] = [
     -- knows about the recipient. Empty until then.
     ALTER TABLE prospects ADD COLUMN timezone TEXT DEFAULT '';
     """,
+    # ── v15: Reach Max mailbox registry and ownership fields ──
+    """
+    CREATE TABLE IF NOT EXISTS mailboxes (
+        id TEXT PRIMARY KEY,
+        label TEXT DEFAULT '',
+        address TEXT DEFAULT '',
+        from_name TEXT DEFAULT '',
+        provider TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        paused_reason TEXT,
+        paused_at TIMESTAMP,
+        paused_by TEXT DEFAULT '',
+        max_daily_sends INTEGER DEFAULT 0,
+        warmup_start_date TEXT,
+        send_window_json TEXT DEFAULT '',
+        weight INTEGER DEFAULT 1,
+        last_sent_at TIMESTAMP,
+        last_error TEXT DEFAULT '',
+        last_error_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS mailbox_events (
+        id TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        detail TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_mailbox_events_mailbox_created
+        ON mailbox_events(mailbox_id, created_at);
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -582,6 +615,101 @@ class StateManager:
                     await db.executescript(script)
                     await db.execute(f"PRAGMA user_version = {target}")
                     await db.commit()
+
+            # SQLite has no portable ADD COLUMN IF NOT EXISTS. This check is
+            # safe on every startup and also repairs a partial schema upgrade.
+            columns = {
+                "outbox": ("mailbox_id",),
+                "conversations": ("mailbox_id",),
+                "prospects": ("mailbox_id",),
+                "companies": ("mailbox_id",),
+                "actions": ("mailbox_id",),
+            }
+            for table, names in columns.items():
+                async with db.execute(f"PRAGMA table_info({table})") as cursor:
+                    present = {row[1] for row in await cursor.fetchall()}
+                for name in names:
+                    if name not in present:
+                        await db.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
+                await db.execute(
+                    f"UPDATE {table} SET mailbox_id = 'default' "
+                    "WHERE mailbox_id IS NULL OR mailbox_id = ''")
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_outbox_mailbox_status_send_at "
+                "ON outbox(mailbox_id, status, send_at)")
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_prospects_mailbox "
+                "ON prospects(mailbox_id)")
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_companies_mailbox "
+                "ON companies(mailbox_id)")
+            await db.commit()
+
+    async def sync_mailboxes(self, mailboxes) -> None:
+        """Apply YAML mailbox settings while retaining runtime/history rows."""
+        await self.init_db()
+        desired = {m.id: m for m in mailboxes}
+        async with self._connect() as db:
+            for mailbox in desired.values():
+                window = (mailbox.send_window.model_dump_json()
+                          if mailbox.send_window is not None else "")
+                warmup = getattr(mailbox, "warmup", None)
+                warmup_start = getattr(warmup, "start_date", "") if warmup else ""
+                initial_status = "active" if mailbox.enabled else "disabled"
+                await db.execute(
+                    """INSERT INTO mailboxes
+                       (id, label, address, from_name, provider, status,
+                        max_daily_sends, warmup_start_date, send_window_json, weight)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(id) DO UPDATE SET
+                         label=excluded.label, address=excluded.address,
+                         from_name=excluded.from_name, provider=excluded.provider,
+                         status=CASE
+                           WHEN excluded.status='disabled' THEN 'disabled'
+                           WHEN mailboxes.status='disabled' THEN 'active'
+                           ELSE mailboxes.status END,
+                         max_daily_sends=excluded.max_daily_sends,
+                         warmup_start_date=excluded.warmup_start_date,
+                         send_window_json=excluded.send_window_json,
+                         weight=excluded.weight, updated_at=CURRENT_TIMESTAMP""",
+                    (mailbox.id, mailbox.label or mailbox.id, mailbox.address,
+                     mailbox.from_name, mailbox.provider, initial_status,
+                     mailbox.max_daily_sends, warmup_start, window, mailbox.weight))
+            ids = tuple(desired)
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                await db.execute(
+                    f"UPDATE mailboxes SET status='disabled', updated_at=CURRENT_TIMESTAMP "
+                    f"WHERE id NOT IN ({placeholders}) AND status != 'disabled'", ids)
+            else:
+                await db.execute(
+                    "UPDATE mailboxes SET status='disabled', updated_at=CURRENT_TIMESTAMP "
+                    "WHERE status != 'disabled'")
+            await db.commit()
+
+    async def get_mailboxes(self) -> list[dict]:
+        await self.init_db()
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM mailboxes ORDER BY id") as cursor:
+                return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_mailbox(self, mailbox_id: str) -> dict | None:
+        await self.init_db()
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM mailboxes WHERE id=?", (mailbox_id,)) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def record_mailbox_event(self, mailbox_id: str, kind: str,
+                                   detail: str = "") -> None:
+        await self.init_db()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, ?, ?)",
+                (str(uuid.uuid4()), mailbox_id, kind, detail))
+            await db.commit()
 
     # ── Companies ──
 

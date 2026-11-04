@@ -17,6 +17,7 @@ def _utcnow() -> datetime:
 class Prospect(BaseModel):
     id: str = ""
     company_id: str = ""       # FK to companies table
+    mailbox_id: str | None = None  # sticky sender identity for the company sequence
     first_name: str = ""       # required for a valid contact
     last_name: str = ""        # required for a valid contact
     email: str = ""

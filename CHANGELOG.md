@@ -15,6 +15,10 @@ minor versions can still change behaviour.
 - Set the dashboard port and default weekday send window to 05:00–17:00.
 - Recorded the multi-mailbox implementation requirements in `REACH_MAX_SPEC.md`.
 - Baseline test run on Python 3.14: 2,804 passed, 184 skipped.
+- Added validated mailbox configuration, a legacy `default` mailbox adapter,
+  an additive/idempotent SQLite mailbox migration, runtime mailbox events,
+  YAML-to-database sync, and initial multi-mailbox configuration docs.
+- Phase 2 test run on Python 3.14: 2,809 passed, 184 skipped.
 
 ### Added
 

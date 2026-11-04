@@ -191,6 +191,74 @@ class SendWindowConfig(BaseModel):
         return self
 
 
+class MailboxConfig(BaseModel):
+    """Non-secret configuration for one sender identity."""
+
+    id: str
+    label: str = ""
+    provider: str
+    address: str
+    from_name: str
+    max_daily_sends: int = 40
+    warmup: WarmupConfig = WarmupConfig()
+    send_window: SendWindowConfig | None = None
+    timezone: str = ""
+    weight: int = 1
+    enabled: bool = True
+    max_bounce_rate: float = 0.03
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _mailbox_id(cls, value):
+        value = str(value or "").strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", value):
+            raise ValueError("id must be a short slug (letters, numbers, _ or -).")
+        return value
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _mailbox_label(cls, value, info):
+        return str(value or "").strip()
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _mailbox_provider(cls, value):
+        value = str(value or "").strip().lower()
+        if value not in {"gmail", "microsoft", "smtp"}:
+            raise ValueError("provider must be gmail, microsoft, or smtp.")
+        return value
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def _mailbox_address(cls, value):
+        value = str(value or "").strip().lower()
+        if not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", value):
+            raise ValueError("address must be a valid email address.")
+        return value
+
+    @field_validator("from_name", mode="before")
+    @classmethod
+    def _mailbox_from_name(cls, value):
+        value = str(value or "").strip()
+        if not value:
+            raise ValueError("from_name must be the real sender name.")
+        return value
+
+    @field_validator("max_daily_sends", "weight")
+    @classmethod
+    def _positive_limit(cls, value, info):
+        if value < 1:
+            raise ValueError(f"{info.field_name} must be a positive integer.")
+        return value
+
+    @field_validator("max_bounce_rate")
+    @classmethod
+    def _bounce_fraction(cls, value):
+        if not 0 <= value <= 1:
+            raise ValueError("max_bounce_rate must be between 0 and 1.")
+        return value
+
+
 def send_window_of(config) -> "SendWindowConfig | None":
     """The configured send window, or None when there isn't one."""
     email = getattr(getattr(config, "channels", None), "email", None)
@@ -274,8 +342,58 @@ class EmailChannelConfig(BaseModel):
     # zone (see SendWindowConfig). None: no window, as before. Native
     # providers only; Instantly schedules its own sends.
     send_window: SendWindowConfig | None = SendWindowConfig()
+    # Multi-mailbox pacing applies across the entire sender pool.
+    send_interval_seconds: int = 15
+    send_jitter_seconds: int = 4
+    mailbox_strategy: str = "least_used"
+    min_gap_per_mailbox_seconds: int = 120
+    bounce_window_sends: int = 100
+    failover_followups: bool = False
+    mailboxes: list[MailboxConfig] = []
     # A logo under every email (see SignatureConfig). Native providers only.
     signature: SignatureConfig = SignatureConfig()
+
+    @field_validator("mailbox_strategy", mode="before")
+    @classmethod
+    def _mailbox_strategy(cls, value):
+        value = str(value or "least_used").strip().lower()
+        if value not in {"least_used", "round_robin", "weighted"}:
+            raise ValueError("mailbox_strategy must be least_used, round_robin, or weighted.")
+        return value
+
+    @field_validator("send_interval_seconds", "bounce_window_sends")
+    @classmethod
+    def _positive_pacing(cls, value, info):
+        if value < 1:
+            raise ValueError(f"{info.field_name} must be a positive integer.")
+        return value
+
+    @field_validator("send_jitter_seconds", "min_gap_per_mailbox_seconds")
+    @classmethod
+    def _nonnegative_pacing(cls, value, info):
+        if value < 0:
+            raise ValueError(f"{info.field_name} must be >= 0.")
+        return value
+
+    @model_validator(mode="after")
+    def _valid_mailboxes(self):
+        if self.mailboxes and self.provider == "instantly":
+            raise ValueError("channels.email.mailboxes cannot be used with provider: instantly.")
+        ids = [m.id for m in self.mailboxes]
+        duplicate_id = next((value for value in ids if ids.count(value) > 1), None)
+        if duplicate_id:
+            raise ValueError(f"channels.email.mailboxes has duplicate id '{duplicate_id}'.")
+        addresses = [m.address for m in self.mailboxes]
+        duplicate_address = next((value for value in addresses
+                                  if addresses.count(value) > 1), None)
+        if duplicate_address:
+            raise ValueError(
+                f"channels.email.mailboxes has duplicate sender address '{duplicate_address}'.")
+        if self.provider != "instantly":
+            for mailbox in self.mailboxes:
+                if mailbox.provider == "instantly":
+                    raise ValueError(f"mailbox '{mailbox.id}' cannot use provider: instantly.")
+        return self
 
     @field_validator("warmup", mode="before")
     @classmethod

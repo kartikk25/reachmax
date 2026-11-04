@@ -286,6 +286,8 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             logger.warning("=" * 60)
 
     await state.init_db()
+    from reachmax.mailboxes import MailboxRegistry
+    await MailboxRegistry(config).sync(state)
     logger.info("Database initialized.")
 
     # Import agents here to avoid circular imports

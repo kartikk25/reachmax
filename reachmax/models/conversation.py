@@ -34,6 +34,7 @@ class Conversation(BaseModel):
     id: str
     prospect_id: str
     campaign_id: str = ""
+    mailbox_id: str | None = None
     channel: str = "email"
     thread: list[Message] = Field(default_factory=list)
     intent: str = ""  # interested/objection/not_interested/ooo/wrong_person
