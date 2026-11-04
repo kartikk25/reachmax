@@ -41,6 +41,14 @@ channels:
         enabled: true
 ```
 
+Follow-ups stay with the mailbox that sent the first message by default. If
+`failover_followups` is explicitly enabled, a queued sequence follow-up can
+move to another eligible mailbox when its assigned mailbox is unavailable.
+Because the replacement mailbox did not send the original message, Reach Max
+clears the old provider thread headers and sends the follow-up as a standalone
+email. Incoming reply drafts remain assigned to the mailbox that received the
+reply.
+
 Each entry needs a unique short id, a unique valid sender address, a real
 `from_name`, a supported provider (`gmail`, `microsoft`, or `smtp`), and a
 positive daily cap. An optional mailbox `send_window` overrides the global

@@ -60,6 +60,8 @@ channels:
     mailbox_strategy: least_used # least_used | round_robin | weighted
     min_gap_per_mailbox_seconds: 120
     bounce_window_sends: 100
+    # Keep follow-ups on their original mailbox; true permits a standalone
+    # follow-up from another eligible sender when that mailbox is unavailable.
     failover_followups: false
     # To add senders, configure mailboxes here. With no list, the existing
     # persona.email and provider become the single "default" mailbox.

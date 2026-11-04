@@ -241,6 +241,7 @@ def test_registry_eligibility_enforces_status_cap_gap_and_window():
     assert registry.eligible("sales_a", now, recipient, status="active")
     assert not registry.eligible("sales_a", now, recipient, status="paused")
     assert not registry.eligible("sales_a", now, recipient, sent_today=40)
+    assert registry.eligible("sales_a", now, recipient, sent_today=40, kind="reply")
     assert not registry.eligible("sales_a", now, recipient,
                                  last_sent_at=now - timedelta(seconds=119))
     assert not registry.eligible("sales_a", now - timedelta(minutes=1), recipient)
@@ -416,3 +417,72 @@ async def test_sender_distributes_cold_sends_across_three_mailboxes(tmp_path, mo
     }, [(row["status"], row["error"], row.get("mailbox_id")) for row in rows]
     assigned = await state.get_outbox(status="sent")
     assert {item["mailbox_id"] for item in assigned} == set(providers)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failover, expected_status, expected_mailbox", [
+    (True, "sent", "sales_b"),
+    (False, "approved", "sales_a"),
+])
+async def test_followup_failover_policy(
+        tmp_path, monkeypatch, failover, expected_status, expected_mailbox):
+    from datetime import datetime, timedelta, timezone
+    from reachmax.agents.sender import Sender
+    from reachmax.config import EnvConfig
+    from tests.test_outbox_native import FakeProvider
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    config = load_config("reachmax.yaml")
+    config.compliance.postal_address = "1 Main Street, Austin, TX 78701"
+    config.compliance.opt_out_line = "Reply no thanks to stop."
+    config.channels.email.send_window = None
+    config.channels.email.min_gap_per_mailbox_seconds = 0
+    config.channels.email.send_interval_seconds = 1
+    config.channels.email.send_jitter_seconds = 0
+    config.channels.email.failover_followups = failover
+    config.channels.email.mailboxes = [
+        MailboxConfig(**mailbox(id="sales_a")),
+        MailboxConfig(**mailbox(id="sales_b", address="sam@example.com")),
+    ]
+    providers = {m.id: FakeProvider() for m in config.channels.email.mailboxes}
+    sender = Sender(None, state, config, EnvConfig())
+    await sender.mailbox_registry.sync(state)
+    sender.mailbox_registry.provider = lambda mailbox_id: providers[mailbox_id]
+    sender.send_pacing = False
+
+    company_id = await state.add_company(Company(name="Acme", domain="acme.example"))
+    prospect = Prospect(company_id=company_id, first_name="Jane", last_name="Smith",
+                        email="jane@acme.example", email_status="verified", status="contacted")
+    prospect_id = await state.add_prospect(prospect)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    first = await state.add_outbox_item(
+        prospect_id=prospect_id, to_email=prospect.email, subject="First",
+        body="Initial note.", send_at=(now - timedelta(days=5)).isoformat(),
+        status="sent", campaign_id="failover-test", step=1, mailbox_id="sales_a")
+    await state.update_outbox_item(first, status="sent", sent_at=(now - timedelta(days=5)).isoformat(),
+                                   message_id="<old@example.com>")
+    second = await state.add_outbox_item(
+        prospect_id=prospect_id, to_email=prospect.email, subject="Following up",
+        body="A short follow-up.", send_at=(now - timedelta(minutes=1)).isoformat(),
+        status="approved", campaign_id="failover-test", step=2,
+        thread_ref="old-thread", in_reply_to="<old@example.com>")
+    assert await state.assign_outbox_mailbox(prospect_id, second, "sales_a") == "sales_a"
+    await state.set_mailbox_status("sales_a", "paused", "Operator paused it")
+
+    monkeypatch.setattr("reachmax.agents.sender._utcnow", lambda: now + timedelta(seconds=1))
+    await sender._drain_due()
+
+    sent = await state.get_outbox_item(second)
+    assert sent["status"] == expected_status
+    assert sent["mailbox_id"] == expected_mailbox
+    assert providers["sales_a"].sent == []
+    if failover:
+        assert providers["sales_b"].sent[0]["thread_ref"] == ""
+        assert providers["sales_b"].sent[0]["in_reply_to"] == ""
+        assert (await state.get_prospect(prospect_id)).mailbox_id == "sales_b"
+        assert (await state.get_company(company_id)).mailbox_id == "sales_b"
+    else:
+        assert providers["sales_b"].sent == []
+        assert (await state.get_prospect(prospect_id)).mailbox_id == "sales_a"
+        assert (await state.get_company(company_id)).mailbox_id == "sales_a"

@@ -126,10 +126,10 @@ class MailboxRegistry:
             now_utc = now.astimezone(pytz.utc)
         operator_tz = pytz.timezone(operator_timezone(self.config))
         today = now_utc.astimezone(operator_tz).date()
-        cap = (self.effective_cap(mailbox_id, today) if kind == "sequence"
-               else mailbox.max_daily_sends)
-        if cap <= 0 or sent_today >= cap:
-            return False
+        if kind == "sequence":
+            cap = self.effective_cap(mailbox_id, today)
+            if cap <= 0 or sent_today >= cap:
+                return False
         if cooldown_until is not None and now < cooldown_until:
             return False
         gap = self.config.channels.email.min_gap_per_mailbox_seconds

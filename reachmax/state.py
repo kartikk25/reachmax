@@ -754,6 +754,52 @@ class StateManager:
             await db.commit()
             return chosen
 
+    async def reassign_outbox_mailbox(self, prospect_id: str, outbox_id: str,
+                                      old_mailbox_id: str, new_mailbox_id: str) -> bool:
+        """Explicitly fail over a queued sequence step and its company stickiness.
+
+        This is only used when the operator enables failover_followups. Reply
+        drafts are never reassigned. Provider thread headers are cleared by
+        the sender because the new mailbox did not send the original message.
+        """
+        await self.init_db()
+        async with self._connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(
+                "SELECT p.company_id, p.mailbox_id, c.mailbox_id "
+                "FROM prospects p LEFT JOIN companies c ON c.id=p.company_id WHERE p.id=?",
+                (prospect_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if not row:
+                await db.rollback()
+                return False
+            company_id, prospect_mailbox, company_mailbox = row
+            sticky_mailbox = company_mailbox or prospect_mailbox
+            if sticky_mailbox not in {old_mailbox_id, new_mailbox_id}:
+                await db.rollback()
+                return False
+            cursor = await db.execute(
+                "UPDATE outbox SET mailbox_id=?, thread_ref='', in_reply_to='', "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=? AND prospect_id=? "
+                "AND mailbox_id=? AND kind='sequence' AND step>1 AND status='approved'",
+                (new_mailbox_id, outbox_id, prospect_id, old_mailbox_id),
+            )
+            if cursor.rowcount != 1:
+                await db.rollback()
+                return False
+            await db.execute(
+                "UPDATE prospects SET mailbox_id=? WHERE id=? AND mailbox_id IN (?, ?)",
+                (new_mailbox_id, prospect_id, old_mailbox_id, new_mailbox_id),
+            )
+            if company_id:
+                await db.execute(
+                    "UPDATE companies SET mailbox_id=? WHERE id=? AND mailbox_id IN (?, ?)",
+                    (new_mailbox_id, company_id, old_mailbox_id, new_mailbox_id),
+                )
+            await db.commit()
+            return True
+
     async def record_mailbox_event(self, mailbox_id: str, kind: str,
                                    detail: str = "") -> None:
         await self.init_db()

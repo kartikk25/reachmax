@@ -975,7 +975,12 @@ class Sender:
                 if not prospect:
                     continue
                 runtime = {m["id"]: m for m in await self.state.get_mailboxes()}
-                ids = [mailbox_id] if mailbox_id else [m.id for m in self.mailbox_registry.mailboxes]
+                may_fail_over = (
+                    item["kind"] == "sequence" and int(item.get("step") or 1) > 1
+                    and bool(getattr(self.config.channels.email, "failover_followups", False))
+                )
+                ids = ([m.id for m in self.mailbox_registry.mailboxes]
+                       if not mailbox_id or may_fail_over else [mailbox_id])
                 operator_zone = operator_timezone(self.config)
                 counts, last_sent, eligible_ids = {}, {}, []
                 now_dt = _utcnow()
@@ -1006,12 +1011,32 @@ class Sender:
                     mailbox_id = await self.mailbox_registry.assign(
                         self.state, prospect, item["id"], eligible_ids, counts, last_sent)
                 elif mailbox_id not in eligible_ids:
-                    # Sticky follow-ups and replies remain queued until their
-                    # original identity is eligible again.
-                    if await self._escalate_stale_reply(
-                            item, "paused, out of cap, outside its window, or cooling down"):
+                    if may_fail_over and eligible_ids:
+                        replacement = self.mailbox_registry.pick(
+                            eligible_ids, counts, last_sent)
+                        if replacement and await self.state.reassign_outbox_mailbox(
+                                prospect.id, item["id"], mailbox_id, replacement):
+                            previous_mailbox = mailbox_id
+                            mailbox_id = replacement
+                            # The new mailbox has no copy of the original
+                            # provider thread. Send as a standalone follow-up,
+                            # without cross-account threading headers.
+                            item["thread_ref"] = ""
+                            item["in_reply_to"] = ""
+                            await self.state.record_mailbox_event(
+                                previous_mailbox, "failover",
+                                f"Queued follow-up reassigned to {replacement}")
+                            await self.state.record_mailbox_event(
+                                replacement, "failover",
+                                f"Queued follow-up accepted from {previous_mailbox}")
+                        else:
+                            continue
+                    else:
+                        # Sticky follow-ups and replies wait by default.
+                        if await self._escalate_stale_reply(
+                                item, "paused, out of cap, outside its window, or cooling down"):
+                            continue
                         continue
-                    continue
                 if not mailbox_id:
                     continue
                 if mailbox_id not in eligible_ids:
