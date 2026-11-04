@@ -27,6 +27,7 @@ minor versions can still change behaviour.
 - Added atomic company/prospect/outbox mailbox assignment for sticky sender identity, and fixed the startup backfill to run only when mailbox columns are first added so later sends remain unassigned until selected.
 - Wired configured mailbox providers into native outbox sends, applying per-mailbox eligibility and caps, preserving sticky assignments, recording send events, and reserving global cold-send slots transactionally in SQLite across restarts.
 - Updated the handler to poll each configured native mailbox independently, deduplicate inbound messages across accounts, route reply drafts to the prospect's assigned mailbox, record mailbox bounce events, pause a mailbox at its rolling bounce threshold, and mark authentication failures on that mailbox only.
+- Added a secret-free mailbox health/activity API, authenticated pause/resume controls, global mailbox selector, Mailboxes dashboard tab, and mailbox filtering for outbox, contacts, companies, conversations, and activity. Fixed renamed dashboard control function identifiers that were invalid JavaScript.
 
 ### Added
 

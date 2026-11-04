@@ -1,4 +1,5 @@
 let currentTab = 'today';
+let selectedMailbox = '';
 let companyDrill = false;      // true while viewing a single company's contacts
 let _companies = [], _prospects = [], _campaigns = [];
 let _signals = null;           // last /api/signals payload, for the cohort builder
@@ -288,6 +289,10 @@ function offlineState() {
 
 async function api(path, opts) {
   try {
+    if (selectedMailbox && path.startsWith('/api/') && !path.startsWith('/api/mailboxes')) {
+      const joiner = path.includes('?') ? '&' : '?';
+      path += joiner + 'mailbox_id=' + encodeURIComponent(selectedMailbox);
+    }
     const r = await authFetch(path, opts);
     if (await lockIfRefused(r)) return null;
     if (!r.ok) {
@@ -416,11 +421,60 @@ function loadCurrentTab() {
     case 'outbox': loadOutbox(); break;
     case 'conversations': loadConversations(); break;
     case 'activity': loadActivity(); break;
+    case 'mailboxes': loadMailboxes(); break;
     case 'usage': loadUsage(); break;
     case 'settings': loadSettings(); loadSendingModeCard(); break;
     case 'controls': loadReachMaxStatus(); loadLogs(); break;
   }
 }
+
+function setMailboxFilter(value) {
+  selectedMailbox = value || '';
+  try { localStorage.setItem('reachmax-mailbox-view', selectedMailbox); } catch { /* ignore */ }
+  loadCurrentTab();
+}
+
+async function loadMailboxes() {
+  const data = await api('/api/mailboxes');
+  const el = document.getElementById('mailboxes-list');
+  const events = document.getElementById('mailboxes-events');
+  if (!el || !data) return;
+  const rows = data.mailboxes || [];
+  const filter = document.getElementById('mailbox-filter');
+  if (filter) {
+    const current = selectedMailbox;
+    filter.innerHTML = '<option value="">All mailboxes</option>' + rows.map(m =>
+      '<option value="' + escHtml(m.id) + '">' + escHtml(m.label) + ' · ' + escHtml(m.address) + '</option>'
+    ).join('');
+    filter.value = current;
+  }
+  if (!rows.length) {
+    el.innerHTML = emptyState(icon('settings'), 'No mailboxes configured',
+      'Add one or more entries under <code>channels.email.mailboxes</code> in <code>reachmax.yaml</code>.');
+  } else {
+    el.innerHTML = '<div class="table-card"><table class="nowrap"><thead><tr><th>Mailbox</th><th>Provider</th><th>Status</th><th>Sent today</th><th>Daily cap</th><th>Window</th><th>Last sent</th><th></th></tr></thead><tbody>' +
+      rows.map(m => '<tr><td><b>' + escHtml(m.label) + '</b><br><span class="muted">' + escHtml(m.address) + '</span>' +
+        (m.paused_reason ? '<br><span class="muted">' + escHtml(m.paused_reason) + '</span>' : '') + '</td><td>' + escHtml(m.provider) + '</td>' +
+        '<td>' + escHtml(m.status) + '</td><td>' + m.sent_today + '</td><td>' + m.effective_daily_cap + ' / ' + m.max_daily_sends + '</td>' +
+        '<td>' + (m.send_window ? escHtml(m.send_window.start + '–' + m.send_window.end + ' · ' + m.send_window.timezone_mode) : 'Open') + '</td>' +
+        '<td>' + escHtml(m.last_sent_at || '—') + '</td><td>' +
+        (m.status === 'paused' || m.status === 'error' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'resume\')">Resume</button>' :
+          m.status === 'active' || m.status === 'warming' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'pause\')">Pause</button>' : '') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+  }
+  if (events) events.innerHTML = (data.events || []).length
+    ? '<div class="table-card"><table><thead><tr><th>Mailbox</th><th>Event</th><th>Detail</th><th>Time</th></tr></thead><tbody>' +
+      data.events.map(e => '<tr><td>' + escHtml(e.mailbox_id) + '</td><td>' + escHtml(e.kind) + '</td><td>' + escHtml(e.detail) + '</td><td>' + escHtml(e.created_at) + '</td></tr>').join('') + '</tbody></table></div>'
+    : emptyState(icon('activity'), 'No mailbox activity yet', 'Send and reply events will appear here.');
+}
+
+async function mailboxAction(id, action) {
+  const result = await api('/api/mailboxes/' + encodeURIComponent(id) + '/' + action, {method: 'POST'});
+  if (result && result.success) { showToast('Mailbox ' + action + 'd.'); loadMailboxes(); }
+  else showToast(failMsg(result, 'Mailbox action failed.'), 'error');
+}
+
+try { selectedMailbox = localStorage.getItem('reachmax-mailbox-view') || ''; } catch { /* ignore */ }
 
 // ── Today: what needs a human ──
 
@@ -1408,7 +1462,7 @@ async function loadReachMaxStatus() {
   document.getElementById('btn-stop').style.display = running ? '' : 'none';
 }
 
-async function startReach Max() {
+async function startReachMax() {
   const btn = document.getElementById('btn-start');
   btn.disabled = true;
   const data = await api('/api/reachmax/start', {method: 'POST'});
@@ -1418,7 +1472,7 @@ async function startReach Max() {
   loadReachMaxStatus();
 }
 
-async function stopReach Max() {
+async function stopReachMax() {
   const btn = document.getElementById('btn-stop');
   btn.disabled = true;
   const data = await api('/api/reachmax/stop', {method: 'POST'});

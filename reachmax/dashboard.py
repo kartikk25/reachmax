@@ -523,13 +523,18 @@ COMPANIES_TAB_LIMIT = 2000
 
 
 @app.get("/api/companies")
-async def get_companies():
+async def get_companies(request: Request):
     """Companies with contact counts, fit score and register status, best fit first."""
+    mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+    if mailbox_id and not await _state().get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
     rows = await query_db("""
         SELECT c.*,
             (SELECT COUNT(*) FROM prospects p WHERE p.company_id = c.id) as contact_count
-        FROM companies c ORDER BY c.created_at DESC
-    """)
+        FROM companies c """ + ("WHERE c.mailbox_id=? " if mailbox_id else "")
+        + "ORDER BY c.created_at DESC", (mailbox_id,) if mailbox_id else ())
+    if mailbox_id:
+        rows = [r for r in rows if r.get("mailbox_id") == mailbox_id]
     try:
         from reachmax.config import load_config
         from reachmax.register import build_register
@@ -969,8 +974,13 @@ async def get_usage():
 
 
 @app.get("/api/prospects")
-async def get_prospects():
-    rows = await query_db("SELECT * FROM prospects ORDER BY created_at DESC LIMIT 200")
+async def get_prospects(request: Request):
+    mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+    if mailbox_id and not await _state().get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+    rows = await query_db(
+        "SELECT * FROM prospects " + ("WHERE mailbox_id=? " if mailbox_id else "")
+        + "ORDER BY created_at DESC LIMIT 200", (mailbox_id,) if mailbox_id else ())
     # Someone whose opt-out was undone keeps a way to see what happened.
     undone = {r["pid"] for r in await query_db(
         "SELECT DISTINCT json_extract(details_json, '$.prospect_id') AS pid FROM actions "
@@ -1067,10 +1077,13 @@ async def _with_context(items: list[dict]) -> list[dict]:
 
 
 @app.get("/api/outbox")
-async def get_outbox_api():
+async def get_outbox_api(request: Request):
     """Outbox queue + kill-switch state for the Outbox tab."""
     try:
         state = _state()
+        mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+        if mailbox_id and not await state.get_mailbox(mailbox_id):
+            return JSONResponse({"error": "unknown mailbox"}, status_code=404)
         await state.init_db()
         # A send cut off mid-way shows up under Didn't send even when Reach Max
         # isn't running.
@@ -1079,19 +1092,91 @@ async def get_outbox_api():
             **_compliance_view(),
             "paused": await state.get_setting("sending_paused"),
             "pending": await _with_context(
-                await state.get_outbox(status="pending_review", limit=100)),
+                await state.get_outbox(status="pending_review", limit=100, mailbox_id=mailbox_id)),
             # Mail going out right now leads the list.
-            "approved": (await state.get_outbox(status="sending", limit=10)
-                         + await state.get_outbox(status="approved", limit=50)),
+            "approved": (await state.get_outbox(status="sending", limit=10, mailbox_id=mailbox_id)
+                         + await state.get_outbox(status="approved", limit=50, mailbox_id=mailbox_id)),
             "sent": (await query_db(
                 "SELECT * FROM outbox WHERE status = 'sent' "
-                "ORDER BY sent_at DESC LIMIT 25")),
+                + ("AND mailbox_id=? " if mailbox_id else "") +
+                "ORDER BY sent_at DESC LIMIT 25", (mailbox_id,) if mailbox_id else ())),
             "failed": (await query_db(
                 "SELECT * FROM outbox WHERE status IN ('failed','rejected','cancelled') "
-                "ORDER BY updated_at DESC LIMIT 25")),
+                + ("AND mailbox_id=? " if mailbox_id else "") +
+                "ORDER BY updated_at DESC LIMIT 25", (mailbox_id,) if mailbox_id else ())),
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/api/mailboxes")
+async def list_mailboxes():
+    """Secret-free mailbox health, effective limits, and recent activity."""
+    from reachmax.config import load_config
+    from reachmax.mailboxes import MailboxRegistry
+    state = _state()
+    await state.init_db()
+    try:
+        config = load_config(str(_resolve_config_file()))
+    except Exception as e:
+        return JSONResponse({"error": f"Couldn't read mailbox config: {e}"}, status_code=500)
+    registry = MailboxRegistry(config)
+    await registry.sync(state)
+    rows = await state.get_mailboxes()
+    result = []
+    for row in rows:
+        mailbox = registry.get(row["id"])
+        if not mailbox:
+            continue
+        window = registry.window(mailbox.id)
+        result.append({
+            "id": mailbox.id, "label": mailbox.label or mailbox.id,
+            "address": mailbox.address, "from_name": mailbox.from_name,
+            "provider": mailbox.provider, "status": row.get("status"),
+            "paused_reason": row.get("paused_reason"),
+            "paused_at": row.get("paused_at"), "paused_by": row.get("paused_by"),
+            "max_daily_sends": mailbox.max_daily_sends,
+            "effective_daily_cap": registry.effective_cap(mailbox.id),
+            "sent_today": await state.count_mailbox_sent_today(mailbox.id),
+            "last_sent_at": row.get("last_sent_at"),
+            "last_error": row.get("last_error"), "last_error_at": row.get("last_error_at"),
+            "send_window": ({"start": window.start, "end": window.end,
+                             "weekdays_only": window.weekdays_only,
+                             "timezone_mode": window.timezone_mode,
+                             "timezone": window.timezone} if window else None),
+        })
+    events = await query_db(
+        "SELECT mailbox_id, kind, detail, created_at FROM mailbox_events "
+        "ORDER BY created_at DESC LIMIT 100")
+    return {"mailboxes": result, "events": events}
+
+
+@app.post("/api/mailboxes/{mailbox_id}/pause")
+async def pause_mailbox(mailbox_id: str):
+    state = _state()
+    if not await state.get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+    changed = await state.set_mailbox_status(mailbox_id, "paused", "Paused from dashboard")
+    return {"success": changed, "status": "paused" if changed else "disabled"}
+
+
+@app.post("/api/mailboxes/{mailbox_id}/resume")
+async def resume_mailbox(mailbox_id: str):
+    state = _state()
+    if not await state.get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+    changed = await state.set_mailbox_status(mailbox_id, "active", by="user")
+    return {"success": changed, "status": "active" if changed else "disabled"}
+
+
+@app.get("/api/mailboxes/{mailbox_id}/events")
+async def mailbox_events(mailbox_id: str):
+    state = _state()
+    if not await state.get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+    return await query_db(
+        "SELECT kind, detail, created_at FROM mailbox_events WHERE mailbox_id=? "
+        "ORDER BY created_at DESC LIMIT 100", (mailbox_id,))
 
 
 @app.get("/api/sending-mode")
@@ -1565,14 +1650,18 @@ async def undo_opt_out(prospect_id: str, request: Request):
 
 
 @app.get("/api/conversations")
-async def get_conversations(awaiting: bool = False):
+async def get_conversations(awaiting: bool = False, request: Request = None):
+    mailbox_id = ((request.query_params.get("mailbox_id") or "").strip()
+                  if request else "")
+    if mailbox_id and not await _state().get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
     rows = await query_db("""
         SELECT c.*, p.first_name, p.last_name, p.email as prospect_email, p.company,
                p.status as prospect_status
         FROM conversations c
         LEFT JOIN prospects p ON c.prospect_id = p.id
-        ORDER BY c.updated_at DESC LIMIT 100
-    """)
+        """ + ("WHERE c.mailbox_id=? " if mailbox_id else "")
+        + "ORDER BY c.updated_at DESC LIMIT 100", (mailbox_id,) if mailbox_id else ())
     # The stored thread holds replies and Reach Max's answers; the cold emails
     # a reply answers live in the Outbox. Attach those (sent ones only) and
     # any answer still waiting for approval, so the page shows the exchange.
@@ -1695,8 +1784,14 @@ async def get_trend(days: int = 14, tz: int = 0):
 
 
 @app.get("/api/activity")
-async def get_activity():
-    rows = await query_db("SELECT * FROM actions ORDER BY created_at DESC LIMIT 100")
+async def get_activity(request: Request):
+    mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+    if mailbox_id and not await _state().get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+    rows = await query_db("SELECT * FROM actions "
+                          + ("WHERE mailbox_id=? " if mailbox_id else "")
+                          + "ORDER BY created_at DESC LIMIT 100",
+                          (mailbox_id,) if mailbox_id else ())
     for row in rows:
         try:
             row["details"] = json.loads(row.get("details_json", "{}"))

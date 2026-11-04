@@ -86,6 +86,7 @@
       <div class="nav-label">System</div>
       <button onclick="showTab('activity', this)"><svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg><span class="label">Activity</span></button>
       <button onclick="showTab('usage', this)"><svg class="icon" aria-hidden="true"><use href="#i-usage"/></svg><span class="label">Usage</span></button>
+      <button onclick="showTab('mailboxes', this)"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span class="label">Mailboxes</span></button>
       <button onclick="showTab('controls', this)"><svg class="icon" aria-hidden="true"><use href="#i-controls"/></svg><span class="label">Controls</span></button>
       <button onclick="showTab('settings', this)"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span class="label">Settings</span></button>
       <button onclick="showTab('help', this)"><svg class="icon" aria-hidden="true"><use href="#i-help"/></svg><span class="label">Help</span></button>
@@ -93,6 +94,10 @@
   </nav>
 
   <div class="sidebar-foot">
+    <label class="form-label" for="mailbox-filter">Mailbox view</label>
+    <select class="form-input" id="mailbox-filter" onchange="setMailboxFilter(this.value)">
+      <option value="">All mailboxes</option>
+    </select>
     <div class="reachmax-status" id="header-status">
       <span class="status-dot stopped" id="header-dot"></span>
       <span id="header-status-text">Checking…</span>
@@ -276,6 +281,14 @@
   <div id="activity-list"></div>
 </div>
 
+<!-- Mailboxes -->
+<div id="mailboxes" class="section">
+  <div class="section-head"><div><h2>Mailboxes</h2><p>Sender health, daily capacity, bounce events, and controls.</p></div></div>
+  <div id="mailboxes-list"></div>
+  <div class="subhead">Recent mailbox activity</div>
+  <div id="mailboxes-events"></div>
+</div>
+
 <!-- Usage -->
 <div id="usage" class="section">
   <div class="section-head"><div><h2>Usage</h2><p>Model usage on your subscription (Claude or Codex): calls and tokens by provider, agent and task. Subscription plans aren't billed per token, so there are no dollar costs here.</p></div></div>
@@ -446,8 +459,8 @@
       </div>
       <div class="status-meta" id="control-meta"></div>
       <div class="btn-group">
-        <button class="btn btn-primary" id="btn-start" onclick="startReach Max()">Start Reach Max</button>
-        <button class="btn btn-danger" id="btn-stop" onclick="stopReach Max()" style="display:none">Stop Reach Max</button>
+        <button class="btn btn-primary" id="btn-start" onclick="startReachMax()">Start Reach Max</button>
+        <button class="btn btn-danger" id="btn-stop" onclick="stopReachMax()" style="display:none">Stop Reach Max</button>
       </div>
     </div>
     <div class="card">

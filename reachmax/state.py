@@ -830,6 +830,25 @@ class StateManager:
                 (str(uuid.uuid4()), mailbox_id, reason[:300]))
             await db.commit()
 
+    async def set_mailbox_status(self, mailbox_id: str, status: str,
+                                 reason: str = "", by: str = "user") -> bool:
+        if status not in {"active", "paused"}:
+            raise ValueError("mailbox status must be active or paused")
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "UPDATE mailboxes SET status=?, paused_reason=?, paused_at=?, paused_by=?, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status!='disabled'",
+                (status, reason if status == "paused" else "",
+                 datetime.now(timezone.utc).replace(tzinfo=None).isoformat() if status == "paused" else None,
+                 by if status == "paused" else "", mailbox_id))
+            if cursor.rowcount:
+                await db.execute(
+                    "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, ?, ?)",
+                    (str(uuid.uuid4()), mailbox_id,
+                     "paused" if status == "paused" else "resumed", reason))
+            await db.commit()
+            return cursor.rowcount > 0
+
     # ── Companies ──
 
     @staticmethod
@@ -1290,6 +1309,7 @@ class StateManager:
         skip_unready_follow_ups: bool = False,
         kind: str | None = None,
         follow_ups_only: bool = False,
+        mailbox_id: str | None = None,
     ) -> list[dict]:
         """skip_unready_follow_ups: leave out sequence follow-ups whose
         previous step hasn't gone out yet, so they can't fill the page.
@@ -1299,6 +1319,9 @@ class StateManager:
         if kind:
             where.append("kind = ?")
             params.append(kind)
+        if mailbox_id:
+            where.append("o.mailbox_id = ?")
+            params.append(mailbox_id)
         if status:
             where.append("status = ?")
             params.append(status)

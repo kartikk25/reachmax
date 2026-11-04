@@ -91,6 +91,34 @@ def test_the_route_list_is_not_empty():
     assert ("POST", "/api/settings/env") in PROTECTED
 
 
+def test_mailbox_api_is_secret_free_and_can_pause_one_mailbox(authed, monkeypatch, env):
+    from reachmax.config import MailboxConfig, load_config
+    from reachmax.state import StateManager
+
+    config = load_config(str(Path(__file__).parents[1] / "reachmax.yaml"))
+    config.channels.email.mailboxes = [MailboxConfig(
+        id="sales_a", label="Sales A", provider="gmail",
+        address="alex@example.test", from_name="Alex Rivera")]
+    monkeypatch.setattr("reachmax.config.load_config", lambda *_: config)
+    async def prepare():
+        state = StateManager(str(dash.DB_PATH))
+        await state.init_db()
+        await state.sync_mailboxes([MailboxConfig(
+            id="sales_a", label="Sales A", provider="gmail",
+            address="alex@example.test", from_name="Alex Rivera")])
+    import asyncio
+    asyncio.run(prepare())
+
+    result = authed.get("/api/mailboxes")
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["mailboxes"][0]["id"] == "sales_a"
+    encoded = json.dumps(payload).lower()
+    assert "password" not in encoded and "secret" not in encoded and "token" not in encoded
+    assert authed.post("/api/mailboxes/sales_a/pause").json()["status"] == "paused"
+    assert authed.post("/api/mailboxes/sales_a/resume").json()["status"] == "active"
+
+
 # ── Every API route needs the token ──
 
 
