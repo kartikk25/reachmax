@@ -115,6 +115,25 @@ async def test_registry_sync_updates_config_and_disables_removed_rows(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_agents_pick_up_mailbox_changes_on_config_reload(tmp_path):
+    from reachmax.agents.handler import Handler
+    from reachmax.agents.sender import Sender
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    config = load_config("reachmax.yaml")
+    sender = Sender(None, state, config, EnvConfig())
+    handler = Handler(None, state, config, EnvConfig())
+    assert sender.mailbox_registry is None and handler.mailbox_registry is None
+
+    config.channels.email.mailboxes = [MailboxConfig(**mailbox())]
+    await sender.refresh_mailboxes()
+    await handler.refresh_mailboxes()
+    assert sender.mailbox_registry.get("sales_a").address == "alex@example.com"
+    assert handler.mailbox_registry.get("sales_a").address == "alex@example.com"
+
+
+@pytest.mark.asyncio
 async def test_mailbox_rate_limit_streak_resets_after_success(tmp_path):
     state = StateManager(str(tmp_path / "reachmax.db"))
     await state.init_db()

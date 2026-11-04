@@ -92,6 +92,7 @@ class Sender:
         self.brain = brain
         self.state = state
         self.config = config
+        self.env = env
         self.instantly = InstantlyClient(env.instantly_api_key)
         self.provider = get_mail_provider(config, env)
         email_config = getattr(getattr(config, "channels", None), "email", None)
@@ -112,6 +113,16 @@ class Sender:
         # The last drain couldn't ask Precleared: quiet hours wake only for
         # cold email it has already cleared until a drain outside them has run.
         self.compliance_held = False
+
+    async def refresh_mailboxes(self) -> None:
+        """Rebuild mailbox routing after the live YAML config changes."""
+        email_config = self.config.channels.email
+        self.mailbox_registry = (MailboxRegistry(self.config, self.env)
+                                 if email_config.mailboxes else None)
+        self.provider = get_mail_provider(self.config, self.env)
+        self._mailbox_providers.clear()
+        if self.mailbox_registry:
+            await self.mailbox_registry.sync(self.state)
 
     @property
     def is_native(self) -> bool:

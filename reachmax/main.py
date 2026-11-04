@@ -311,6 +311,23 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
 
     while not stop_event.is_set():
         try:
+            # Mailbox entries and per-mailbox send settings are YAML-backed.
+            # Reload them at each heartbeat so add/remove/enable edits take
+            # effect without restarting the Reach Max process.
+            try:
+                latest_config = load_config()
+                if latest_config.channels.email != config.channels.email:
+                    for field in config.model_fields:
+                        setattr(config, field, getattr(latest_config, field))
+                    brain.config = config.brain
+                    brain.provider = brain.config.provider
+                    brain.model = brain.config.model
+                    await sender.refresh_mailboxes()
+                    await handler.refresh_mailboxes()
+                    logger.info("Configuration changed; mailbox routing refreshed.")
+            except Exception as reload_error:
+                logger.warning(f"Config reload failed; keeping the last valid config: {reload_error}")
+
             # 0. Approval or autopilot, as the config file says now: the
             # dashboard can switch it while Reach Max runs.
             await sync_sending_mode(config, state)

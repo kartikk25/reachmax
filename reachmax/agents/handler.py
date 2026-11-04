@@ -526,6 +526,7 @@ class Handler:
         self.brain = brain
         self.state = state
         self.config = config
+        self.env = env
         self.instantly = InstantlyClient(env.instantly_api_key)
         self.provider = get_mail_provider(config, env)
         email_config = getattr(getattr(config, "channels", None), "email", None)
@@ -535,6 +536,15 @@ class Handler:
         self._active_mailbox_id = ""
         self.skills = ""
         self.last_read_problem = ""   # why the last mailbox read failed, for the heartbeat
+
+    async def refresh_mailboxes(self) -> None:
+        """Rebuild inbox polling after the live YAML config changes."""
+        email_config = self.config.channels.email
+        self.mailbox_registry = (MailboxRegistry(self.config, self.env)
+                                 if email_config.mailboxes else None)
+        self.provider = get_mail_provider(self.config, self.env)
+        if self.mailbox_registry:
+            await self.mailbox_registry.sync(self.state)
 
     @property
     def is_native(self) -> bool:
