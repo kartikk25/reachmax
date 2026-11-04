@@ -114,6 +114,7 @@ def test_mailbox_api_is_secret_free_and_can_pause_one_mailbox(authed, monkeypatc
     assert result.status_code == 200
     payload = result.json()
     assert payload["mailboxes"][0]["id"] == "sales_a"
+    assert {"bounce_rate", "reply_rate", "warmup_days_to_ramp", "next_send_slot"} <= set(payload["mailboxes"][0])
     encoded = json.dumps(payload).lower()
     assert "password" not in encoded and "secret" not in encoded and "token" not in encoded
     assert "fake-secret-token" not in encoded

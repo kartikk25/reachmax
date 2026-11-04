@@ -1154,6 +1154,42 @@ async def list_mailboxes():
         if not mailbox:
             continue
         window = registry.window(mailbox.id)
+        sent_count = bounce_count = reply_count = total_sent_count = 0
+        async with state._connect() as db:
+            async with db.execute(
+                "SELECT kind FROM mailbox_events WHERE mailbox_id=? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (mailbox.id, max(100, config.channels.email.bounce_window_sends * 2)),
+            ) as cursor:
+                for event in await cursor.fetchall():
+                    if event[0] == "sent":
+                        if sent_count >= config.channels.email.bounce_window_sends:
+                            break
+                        sent_count += 1
+                    elif event[0] == "bounce" and sent_count < config.channels.email.bounce_window_sends:
+                        bounce_count += 1
+            async with db.execute(
+                "SELECT COUNT(DISTINCT prospect_id) FROM conversations WHERE mailbox_id=?",
+                (mailbox.id,),
+            ) as cursor:
+                reply_count = (await cursor.fetchone())[0]
+            async with db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE mailbox_id=? AND status='sent'",
+                (mailbox.id,),
+            ) as cursor:
+                total_sent_count = (await cursor.fetchone())[0]
+        bounce_rate = (bounce_count / sent_count) if sent_count else 0.0
+        days_in_warmup = mailbox.warmup.days_in()
+        days_to_ramp = (max(0, mailbox.warmup.min_days - days_in_warmup)
+                        if days_in_warmup is not None else 0)
+        from reachmax.send_window import in_window, next_send_time
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        zone = registry.timezone_for(mailbox.id)
+        next_slot = None
+        if window:
+            slot = (now_utc if in_window(now_utc, zone, window)
+                    else next_send_time(now_utc, zone, window))
+            next_slot = slot.replace(tzinfo=timezone.utc).isoformat()
         result.append({
             "id": mailbox.id, "label": mailbox.label or mailbox.id,
             "address": mailbox.address, "from_name": mailbox.from_name,
@@ -1171,6 +1207,13 @@ async def list_mailboxes():
             "last_error": ("Provider reported an error. Review the mailbox configuration and server log."
                            if row.get("last_error_at") else ""),
             "last_error_at": row.get("last_error_at"),
+            "bounce_rate": bounce_rate,
+            "bounce_sample_sends": sent_count,
+            "reply_rate": (reply_count / total_sent_count) if total_sent_count else 0.0,
+            "reply_count": reply_count,
+            "warmup_days_elapsed": days_in_warmup,
+            "warmup_days_to_ramp": days_to_ramp,
+            "next_send_slot": next_slot,
             "send_window": ({"start": window.start, "end": window.end,
                              "weekdays_only": window.weekdays_only,
                              "timezone_mode": window.timezone_mode,

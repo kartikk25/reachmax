@@ -454,12 +454,15 @@ async function loadMailboxes() {
     el.innerHTML = emptyState(icon('settings'), 'No mailboxes configured',
       'Add one or more entries under <code>channels.email.mailboxes</code> in <code>reachmax.yaml</code>.');
   } else {
-    el.innerHTML = complianceBlock + '<div class="table-card"><table class="nowrap"><thead><tr><th>Mailbox</th><th>Provider</th><th>Status</th><th>Sent today</th><th>Daily cap</th><th>Window</th><th>Last sent</th><th></th></tr></thead><tbody>' +
+    el.innerHTML = complianceBlock + '<div class="table-card"><table class="nowrap"><thead><tr><th>Mailbox</th><th>Provider</th><th>Status</th><th>Sent today</th><th>Daily cap</th><th>Window</th><th>Bounces</th><th>Replies</th><th>Warmup</th><th>Next slot</th><th></th></tr></thead><tbody>' +
       rows.map(m => '<tr><td><b>' + escHtml(m.label) + '</b><br><span class="muted">' + escHtml(m.address) + '</span>' +
         (m.paused_reason ? '<br><span class="muted">' + escHtml(m.paused_reason) + '</span>' : '') + '</td><td>' + escHtml(m.provider) + '</td>' +
         '<td>' + escHtml(m.status) + '</td><td>' + m.sent_today + '</td><td>' + m.effective_daily_cap + ' / ' + m.max_daily_sends + '</td>' +
         '<td>' + (m.send_window ? escHtml(m.send_window.start + '–' + m.send_window.end + ' · ' + m.send_window.timezone_mode) : 'Open') + '</td>' +
-        '<td>' + escHtml(m.last_sent_at || '—') + '</td><td>' +
+        '<td>' + (100 * Number(m.bounce_rate || 0)).toFixed(1) + '% (' + Number(m.bounce_sample_sends || 0) + ')</td>' +
+        '<td>' + (100 * Number(m.reply_rate || 0)).toFixed(1) + '% (' + Number(m.reply_count || 0) + ')</td>' +
+        '<td>' + (m.warmup_days_to_ramp ? Number(m.warmup_days_to_ramp) + ' days to ramp' : 'At current cap') + '</td>' +
+        '<td>' + escHtml(m.next_send_slot || 'Open') + '</td><td>' +
         '<button class="btn btn-secondary btn-sm" onclick="mailboxTest(' + jsq(m.id) + ')">Test</button> ' +
         (m.status === 'paused' || m.status === 'error' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'resume\')">Resume</button>' :
           m.status === 'active' || m.status === 'warming' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'pause\')">Pause</button>' : '') + '</td></tr>').join('') +
