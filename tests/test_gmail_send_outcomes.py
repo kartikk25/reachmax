@@ -128,6 +128,8 @@ async def test_no_token_does_not_attempt_send(monkeypatch):
 async def test_transport_read_failure_then_recovery_sends_once(monkeypatch, tmp_path):
     from tests.test_codex_e2e import Harness, _approved_item
     harness = Harness(monkeypatch, tmp_path, provider='claude', model='')
+    # Keep transport recovery independent of the wall clock's send window.
+    harness.config.channels.email.send_window = None
     await harness.state.init_db()
     await _approved_item(harness.state)
     reads, posts, after_failure = [], [], []

@@ -61,6 +61,8 @@ async def test_heartbeat_does_not_send_until_gmail_recovers(monkeypatch, tmp_pat
     # not a model/CLI service. Its mail send only appends to an in-memory list.
     from tests.test_codex_e2e import Harness, _approved_item
     reachmax = Harness(monkeypatch, tmp_path, provider='claude', model='')
+    # This test exercises inbox recovery, not the real-time send window.
+    reachmax.config.channels.email.send_window = None
     await reachmax.state.init_db()
     await _approved_item(reachmax.state)
     gmail = provider([None, {'resultSizeEstimate': 0}])

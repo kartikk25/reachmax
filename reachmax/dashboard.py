@@ -2500,7 +2500,13 @@ async def get_today(request: Request):
         n_companies = companies[0]["n"] if companies else 0
 
         unprofiled_count = await state.count_companies_needing_profile(mailbox_id=mailbox_id)
-        mailbox_health = (await list_mailboxes()).get("mailboxes", [])
+        try:
+            mailbox_health = (await list_mailboxes()).get("mailboxes", [])
+        except Exception as mailbox_error:
+            # The health strip is supplementary; an older/synthetic config
+            # must not hide compliance and reply holds from the Today queue.
+            logger.debug(f"Could not load mailbox health for Today: {mailbox_error}")
+            mailbox_health = []
         if mailbox_id:
             mailbox_health = [m for m in mailbox_health if m.get("id") == mailbox_id]
         stats = {
