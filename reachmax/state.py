@@ -1439,6 +1439,15 @@ class StateManager:
             async with db.execute(sql, params) as cursor:
                 return [dict(r) for r in await cursor.fetchall()]
 
+    async def count_due_approved_outbox(self, due_before: str) -> int:
+        """Count the complete due queue so native mailbox drains can empty it."""
+        async with self._connect() as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE status='approved' "
+                "AND (send_at IS NULL OR send_at<=?)", (due_before,),
+            ) as cursor:
+                return int((await cursor.fetchone())[0])
+
     async def get_texts_for_prospect(self, prospect_id: str, limit: int = 50) -> list[str]:
         """Everything Reach Max wrote for this person, which a reply may quote
         back: their Outbox emails (a sent one with its footer, whatever it

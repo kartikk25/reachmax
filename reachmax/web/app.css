@@ -248,6 +248,11 @@ nav button.active .icon { color: var(--accent); }
 
 main.content { min-width: 0; padding: var(--sp-6) var(--sp-6) 96px; }
 .content-inner { max-width: var(--content-w); margin: 0 auto; }
+.mailbox-scope {
+  display: inline-flex; align-items: center; margin-bottom: var(--sp-4); padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2);
+  color: var(--text-2); font-size: var(--fs-small); font-weight: 500;
+}
 
 .section { display: none; }
 .section.active { display: block; }

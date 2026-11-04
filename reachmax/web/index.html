@@ -96,7 +96,7 @@
   <div class="sidebar-foot">
     <label class="form-label" for="mailbox-filter">Mailbox view</label>
     <select class="form-input" id="mailbox-filter" onchange="setMailboxFilter(this.value)">
-      <option value="">All mailboxes</option>
+      <option value="">All mailboxes (Master)</option>
     </select>
     <div class="reachmax-status" id="header-status">
       <span class="status-dot stopped" id="header-dot"></span>
@@ -113,6 +113,8 @@
 
 <main class="content">
 <div class="content-inner">
+
+<div class="mailbox-scope" id="mailbox-scope" aria-live="polite">Viewing: All mailboxes (Master)</div>
 
 <!-- Today: what needs a human -->
 <div id="today" class="section active">

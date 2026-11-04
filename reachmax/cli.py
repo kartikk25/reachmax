@@ -561,6 +561,9 @@ def cmd_mailbox(args):
             print()
             return
         if action == "add":
+            global_window = config.channels.email.send_window
+            default_start = global_window.start if global_window else "05:00"
+            default_end = global_window.end if global_window else "17:00"
             values = {
                 "id": input("Mailbox id (short slug): ").strip(),
                 "label": input("Label: ").strip(),
@@ -570,6 +573,11 @@ def cmd_mailbox(args):
                 "max_daily_sends": int(input("Daily cap [40]: ").strip() or "40"),
             }
             from reachmax.config import MailboxConfig
+            start = input(f"Send window start [{default_start}]: ").strip() or default_start
+            end = input(f"Send window end [{default_end}]: ").strip() or default_end
+            window_values = global_window.model_dump(mode="json") if global_window else {}
+            window_values.update(start=start, end=end)
+            values["send_window"] = window_values
             mailbox = MailboxConfig(**values)
             if any(existing.id == mailbox.id for existing in registry.mailboxes):
                 raise ValueError(f"mailbox id '{mailbox.id}' already exists")
@@ -587,8 +595,34 @@ def cmd_mailbox(args):
             source.write_text(yaml.safe_dump(document, sort_keys=False, allow_unicode=True),
                               encoding="utf-8")
             await state.sync_mailboxes([*registry.mailboxes, mailbox])
-            print(f"\n  Added {mailbox.id}. Configure secrets in .env using REACHMAX_MAILBOX_"
-                  f"{mailbox.id.upper()}_... variables.\n")
+            import re
+            prefix = "REACHMAX_MAILBOX_" + re.sub(
+                r"[^A-Za-z0-9]", "_", mailbox.id).upper() + "_"
+            print(f"\n  Added {mailbox.id}. Add the provider settings below to .env:")
+            if mailbox.provider == "smtp":
+                print("  " + "\n  ".join((
+                    f"{prefix}SMTP_HOST=",
+                    f"{prefix}SMTP_PORT=587",
+                    f"{prefix}SMTP_USERNAME={mailbox.address}",
+                    f"{prefix}SMTP_PASSWORD=",
+                    f"{prefix}IMAP_HOST=",
+                    f"{prefix}IMAP_PORT=993",
+                    f"{prefix}IMAP_USERNAME={mailbox.address}",
+                    f"{prefix}IMAP_PASSWORD=",
+                )))
+            elif mailbox.provider == "gmail":
+                print("  " + "\n  ".join((
+                    f"{prefix}GMAIL_CLIENT_ID=  # optional if configured globally",
+                    f"{prefix}GMAIL_CLIENT_SECRET=  # optional if configured globally",
+                )))
+                print(f"  Then authorize: reachmax gmail auth --mailbox {mailbox.id}")
+            else:
+                print("  " + "\n  ".join((
+                    f"{prefix}M365_CLIENT_ID=  # optional if configured globally",
+                    f"{prefix}M365_TENANT_ID=  # optional if configured globally",
+                )))
+                print(f"  Then authorize: reachmax microsoft auth --mailbox {mailbox.id}")
+            print()
             return
         mailbox_id = getattr(args, "mailbox_id", "")
         mailbox = registry.get(mailbox_id)

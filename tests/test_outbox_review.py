@@ -78,6 +78,31 @@ def test_pending_drafts_carry_the_facts_behind_them(client):
     assert ctx["signals"] == {"Website platform / tools": "Lovable, Stripe", "Running Google Ads": "yes"}
 
 
+def test_outbox_includes_assigned_sender_identity(client):
+    state, item_id = asyncio.run(_seed(client.db_path))
+    async def assign():
+        from reachmax.config import MailboxConfig
+        await state.sync_mailboxes([MailboxConfig(
+            id="sales_a", label="Sales A", provider="smtp",
+            address="alex@example.test", from_name="Alex Rivera", max_daily_sends=20)])
+        await state.update_outbox_item(item_id, mailbox_id="sales_a")
+    asyncio.run(assign())
+    item = client.get("/api/outbox").json()["pending"][0]
+    assert item["mailbox_id"] == "sales_a"
+    assert item["mailbox_label"] == "Sales A"
+    assert item["mailbox_address"] == "alex@example.test"
+
+
+def test_outbox_redacts_provider_credential_details(client):
+    state, item_id = asyncio.run(_seed(client.db_path, status="failed"))
+    asyncio.run(state.update_outbox_item(
+        item_id, error="SMTP authentication failed with password=fake-secret-token"))
+    response = client.get("/api/outbox")
+    encoded = response.text.lower()
+    assert "fake-secret-token" not in encoded
+    assert "password=" not in encoded
+
+
 def test_editing_a_draft_changes_it_but_does_not_approve_it(client):
     state, item_id = asyncio.run(_seed(client.db_path))
     r = client.post(f"/api/outbox/{item_id}/edit", json={

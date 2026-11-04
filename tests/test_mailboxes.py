@@ -39,6 +39,49 @@ def test_mailbox_config_validates_sender_identity_and_limits():
             MailboxConfig(**broken)
 
 
+def test_send_failure_classification_separates_permanent_and_temporary_recipients():
+    from reachmax.agents.sender import is_permanent_recipient_error
+
+    assert is_permanent_recipient_error("550 5.1.1 User unknown")
+    assert not is_permanent_recipient_error(
+        "450 Recipient address rejected: mailbox temporarily unavailable")
+
+
+def test_cli_mailbox_add_writes_window_and_prints_exact_smtp_env(tmp_path, monkeypatch, capsys):
+    import builtins
+    from types import SimpleNamespace
+    import yaml
+    import reachmax.config as config_module
+    import reachmax.state as state_module
+    from reachmax.cli import cmd_mailbox
+
+    config = load_config("reachmax.yaml")
+    source = tmp_path / "reachmax.yaml"
+    source.write_text("channels:\n  email:\n    provider: smtp\n    mailboxes: []\n",
+                      encoding="utf-8")
+    config._source_path = str(source)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+
+    original_state = StateManager
+    class IsolatedState(original_state):
+        def __init__(self):
+            super().__init__(str(tmp_path / "reachmax.db"))
+    monkeypatch.setattr(state_module, "StateManager", IsolatedState)
+    answers = iter(("sales-x", "Sales X", "alex@custom.example", "Alex Rivera",
+                    "smtp", "25", "06:00", "16:00"))
+    monkeypatch.setattr(builtins, "input", lambda _prompt: next(answers))
+
+    cmd_mailbox(SimpleNamespace(mailbox_action="add"))
+
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    added = document["channels"]["email"]["mailboxes"][0]
+    assert added["send_window"]["start"] == "06:00"
+    assert added["send_window"]["end"] == "16:00"
+    output = capsys.readouterr().out
+    assert "REACHMAX_MAILBOX_SALES_X_SMTP_HOST=" in output
+    assert "REACHMAX_MAILBOX_SALES_X_IMAP_PASSWORD=" in output
+
+
 def test_email_config_rejects_duplicate_mailboxes_and_instantly_pool():
     with pytest.raises(ValidationError, match="duplicate id 'sales_a'"):
         EmailChannelConfig(provider="gmail", mailboxes=[mailbox(), mailbox(address="sam@example.com")])
@@ -486,3 +529,151 @@ async def test_followup_failover_policy(
         assert providers["sales_b"].sent == []
         assert (await state.get_prospect(prospect_id)).mailbox_id == "sales_a"
         assert (await state.get_company(company_id)).mailbox_id == "sales_a"
+
+
+@pytest.mark.asyncio
+async def test_permanent_recipient_rejection_invalidates_address_and_cancels_sequence(
+        tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from reachmax.agents.sender import Sender
+    from reachmax.config import EnvConfig
+    from reachmax.integrations.mail_provider import SendResult
+    from tests.test_outbox_native import FakeProvider
+
+    class RejectingProvider(FakeProvider):
+        async def send_email(self, *args, **kwargs):
+            return SendResult(ok=False, error="SMTPRecipientsRefused: 550 5.1.1 User unknown")
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    config = load_config("reachmax.yaml")
+    config.compliance.postal_address = "1 Main Street, Austin, TX 78701"
+    config.compliance.opt_out_line = "Reply no thanks to stop."
+    config.channels.email.send_window = None
+    config.channels.email.send_interval_seconds = 1
+    config.channels.email.send_jitter_seconds = 0
+    config.channels.email.min_gap_per_mailbox_seconds = 0
+    config.channels.email.mailboxes = [MailboxConfig(**mailbox())]
+    provider = RejectingProvider()
+    sender = Sender(None, state, config, EnvConfig())
+    await sender.mailbox_registry.sync(state)
+    sender.mailbox_registry.provider = lambda _: provider
+    sender.send_pacing = False
+
+    company_id = await state.add_company(Company(name="Acme", domain="acme.example"))
+    prospect = Prospect(company_id=company_id, first_name="Jane", last_name="Smith",
+                        email="jane@acme.example", email_status="verified")
+    prospect_id = await state.add_prospect(prospect)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    ids = []
+    for step in (1, 2):
+        ids.append(await state.add_outbox_item(
+            prospect_id=prospect_id, to_email=prospect.email, subject="A question",
+            body="Could I ask?", send_at=(now - timedelta(minutes=1)).isoformat(),
+            status="approved", campaign_id="bad-recipient", step=step))
+    monkeypatch.setattr("reachmax.agents.sender._utcnow", lambda: now + timedelta(seconds=1))
+    await sender._drain_due()
+
+    assert (await state.get_prospect(prospect_id)).email_status == "invalid"
+    assert (await state.get_outbox_item(ids[0]))["status"] == "failed"
+    assert (await state.get_outbox_item(ids[1]))["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_mailbox_drain_processes_more_than_eight_due_items(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from reachmax.agents.sender import Sender
+    from reachmax.config import EnvConfig
+    from tests.test_outbox_native import FakeProvider
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    config = load_config("reachmax.yaml")
+    config.compliance.postal_address = "1 Main Street, Austin, TX 78701"
+    config.compliance.opt_out_line = "Reply no thanks to stop."
+    config.channels.email.send_window = None
+    config.channels.email.send_interval_seconds = 1
+    config.channels.email.send_jitter_seconds = 0
+    config.channels.email.min_gap_per_mailbox_seconds = 0
+    config.channels.email.mailboxes = [
+        MailboxConfig(**mailbox(id="sales_a", max_daily_sends=20)),
+        MailboxConfig(**mailbox(id="sales_b", address="sam@example.com", max_daily_sends=20)),
+    ]
+    providers = {m.id: FakeProvider() for m in config.channels.email.mailboxes}
+    sender = Sender(None, state, config, EnvConfig())
+    await sender.mailbox_registry.sync(state)
+    sender.mailbox_registry.provider = lambda mid: providers[mid]
+    sender.send_pacing = False
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    for index in range(10):
+        company_id = await state.add_company(
+            Company(name=f"Company {index}", domain=f"company{index}.example"))
+        prospect = Prospect(company_id=company_id, first_name="Jane", last_name="Smith",
+                            email=f"jane{index}@company{index}.example", email_status="verified")
+        prospect_id = await state.add_prospect(prospect)
+        await state.add_outbox_item(
+            prospect_id=prospect_id, to_email=prospect.email, subject="A quick question",
+            body="Could I ask?", send_at=(now - timedelta(minutes=1)).isoformat(),
+            status="approved", campaign_id="drain-test", step=1)
+
+    clock = now
+    def advancing_clock():
+        nonlocal clock
+        result = clock
+        clock += timedelta(seconds=60)
+        return result
+    monkeypatch.setattr("reachmax.agents.sender._utcnow", advancing_clock)
+    await sender._drain_due()
+
+    assert sum(len(provider.sent) for provider in providers.values()) == 10
+    assert len(await state.get_outbox(status="sent")) == 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error, expected_status, expect_cooldown", [
+    ("SMTP 451 4.3.0 temporarily unavailable", "active", True),
+    ("SMTPAuthenticationError 535 authentication failed", "error", False),
+])
+async def test_mailbox_temporary_and_auth_failures_are_classified(
+        tmp_path, monkeypatch, error, expected_status, expect_cooldown):
+    from datetime import datetime, timedelta, timezone
+    from reachmax.agents.sender import Sender
+    from reachmax.config import EnvConfig
+    from reachmax.integrations.mail_provider import SendResult
+    from tests.test_outbox_native import FakeProvider
+
+    class FailingProvider(FakeProvider):
+        async def send_email(self, *args, **kwargs):
+            return SendResult(ok=False, error=error)
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    config = load_config("reachmax.yaml")
+    config.compliance.postal_address = "1 Main Street, Austin, TX 78701"
+    config.compliance.opt_out_line = "Reply no thanks to stop."
+    config.channels.email.send_window = None
+    config.channels.email.send_interval_seconds = 1
+    config.channels.email.send_jitter_seconds = 0
+    config.channels.email.min_gap_per_mailbox_seconds = 0
+    config.channels.email.mailboxes = [MailboxConfig(**mailbox())]
+    sender = Sender(None, state, config, EnvConfig())
+    await sender.mailbox_registry.sync(state)
+    sender.mailbox_registry.provider = lambda _: FailingProvider()
+    sender.send_pacing = False
+    company_id = await state.add_company(Company(name="Acme", domain="acme.example"))
+    prospect = Prospect(company_id=company_id, first_name="Jane", last_name="Smith",
+                        email="jane@acme.example", email_status="verified")
+    prospect_id = await state.add_prospect(prospect)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    item_id = await state.add_outbox_item(
+        prospect_id=prospect_id, to_email=prospect.email, subject="A quick question",
+        body="Could I ask?", send_at=(now - timedelta(minutes=1)).isoformat(),
+        status="approved", campaign_id="failure-classification", step=1)
+    monkeypatch.setattr("reachmax.agents.sender._utcnow", lambda: now + timedelta(seconds=1))
+    await sender._drain_due()
+
+    mailbox_row = await state.get_mailbox("sales_a")
+    assert mailbox_row["status"] == expected_status
+    assert (await state.get_outbox_item(item_id))["status"] == "approved"
+    assert bool(mailbox_row.get("cooldown_until")) is expect_cooldown

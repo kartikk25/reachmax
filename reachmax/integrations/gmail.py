@@ -182,7 +182,7 @@ class GmailProvider(MailProvider):
                     "grant_type": "refresh_token",
                 })
         except httpx.HTTPError as e:
-            logger.error(f"Gmail token refresh failed: {e}")
+            logger.error(f"Gmail token refresh failed ({type(e).__name__})")
             self._token_problem = unreachable.format(f" ({type(e).__name__})")
             return None
         if resp.status_code in (400, 401, 403):
@@ -220,6 +220,8 @@ class GmailProvider(MailProvider):
     ):
         token = await self._token()
         if not token:
+            if sending and self._token_problem:
+                return {"_reachmax_send_error": self._token_problem[:240]}
             return None
         headers = {"Authorization": f"Bearer {token}"}
         try:
@@ -228,7 +230,7 @@ class GmailProvider(MailProvider):
                     method, f"{API_BASE}{path}", headers=headers, **kwargs
                 )
         except httpx.HTTPError as e:
-            logger.error(f"Gmail request failed ({path}): {e}")
+            logger.error(f"Gmail request failed ({path}; {type(e).__name__})")
             if sending:
                 # The request may have reached Gmail before the connection failed.
                 raise RuntimeError("Gmail send outcome is unknown") from e
@@ -239,7 +241,18 @@ class GmailProvider(MailProvider):
         if resp.status_code == 404 and not_found is not None:
             return not_found
         if resp.status_code >= 400:
-            logger.error(f"Gmail API {resp.status_code} on {path}: {resp.text[:200]}")
+            logger.error(f"Gmail API {resp.status_code} on {path}")
+            if sending:
+                detail = f"Gmail API HTTP {resp.status_code}"
+                if resp.status_code == 400:
+                    try:
+                        error = resp.json().get("error", {})
+                        message = error.get("message", "") if isinstance(error, dict) else ""
+                    except (ValueError, AttributeError):
+                        message = ""
+                    if message:
+                        detail += f": {str(message)[:180]}"
+                return {"_reachmax_send_error": detail}
             return None
         try:
             data = resp.json()
@@ -287,6 +300,8 @@ class GmailProvider(MailProvider):
         data = await self._request("POST", "/messages/send", sending=True, json=payload)
         if data is None:
             return SendResult(ok=False, error="gmail send failed")
+        if isinstance(data, dict) and data.get("_reachmax_send_error"):
+            return SendResult(ok=False, error=str(data["_reachmax_send_error"])[:300])
 
         # Fetch the assigned RFC Message-ID for bounce/thread matching later.
         message_id = ""

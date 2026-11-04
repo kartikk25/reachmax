@@ -74,6 +74,22 @@ SENDABLE_STATUSES = {"new", "queued"}
 # or "invalid" address — that bounces and burns the sending domain.
 SENDABLE_EMAIL_STATUSES = {"verified"}
 SENDABLE_EMAIL_STATUSES_WITH_RISKY = {"verified", "risky"}
+PERMANENT_RECIPIENT_ERRORS = (
+    "5.1.1", "5.1.0", "5.1.3", "errorinvalidrecipients",
+    "invalid recipient", "recipient address rejected", "recipient rejected",
+    "unknown recipient", "user unknown", "no such user", "address not found",
+    "mailbox does not exist", "mailbox unavailable",
+)
+
+
+def is_permanent_recipient_error(error: str) -> bool:
+    """Recognize explicit bad-recipient responses, not generic SMTP 550s."""
+    text = str(error or "").lower()
+    if any(marker in text for marker in (
+            "421", "450", "451", "452", "4.2.", "4.3.",
+            "temporarily unavailable", "try again later")):
+        return False
+    return any(marker in text for marker in PERMANENT_RECIPIENT_ERRORS)
 
 
 def _utcnow() -> datetime:
@@ -884,20 +900,42 @@ class Sender:
         max_daily = (sum(m.max_daily_sends for m in self.mailbox_registry.mailboxes)
                      if self.mailbox_registry else self.config.channels.email.max_daily_sends)
         sent_today = await self.state.count_outbox_sent_today()
-        budget = min(MAX_SENDS_PER_CYCLE, max_daily - sent_today)
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        if self.mailbox_registry:
+            # The per-mailbox cold cap is enforced during eligibility and the
+            # transactional claim. Drain every item currently due; replies
+            # are not charged against those cold-email caps.
+            budget = await self.state.count_due_approved_outbox(now)
+        else:
+            budget = min(MAX_SENDS_PER_CYCLE, max_daily - sent_today)
         if budget <= 0:
             logger.info(f"Sender: daily send cap reached ({sent_today}/{max_daily}).")
             return
         # Cold email has its own cap under the warmup ramp; replies don't.
         # Counted from local midnight, the day the ramp counts in.
-        cold_cap = (sum(self.mailbox_registry.effective_cap(m.id) for m in self.mailbox_registry.mailboxes)
-                    if self.mailbox_registry else cold_daily_cap(self.config.channels.email))
-        midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-        cold_left = cold_cap - await self.state.count_outbox_sent_today(
-            kind="sequence",
-            since=midnight.astimezone(timezone.utc).replace(tzinfo=None).isoformat())
+        if self.mailbox_registry:
+            import pytz
+            zone = pytz.timezone(operator_timezone(self.config))
+            now_utc = datetime.now(timezone.utc)
+            local_today = now_utc.astimezone(zone).date()
+            enabled = [m for m in self.mailbox_registry.mailboxes if m.enabled]
+            cold_cap = sum(self.mailbox_registry.effective_cap(m.id, local_today)
+                           for m in enabled)
+            sent_cold_today = sum([
+                await self.state.count_mailbox_sent_today(
+                    m.id, kind="sequence", timezone_name=operator_timezone(self.config),
+                    now=now_utc)
+                for m in enabled
+            ])
+            cold_left = cold_cap - sent_cold_today
+        else:
+            cold_cap = cold_daily_cap(self.config.channels.email)
+            midnight = datetime.now().astimezone().replace(
+                hour=0, minute=0, second=0, microsecond=0)
+            cold_left = cold_cap - await self.state.count_outbox_sent_today(
+                kind="sequence",
+                since=midnight.astimezone(timezone.utc).replace(tzinfo=None).isoformat())
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         # In quiet hours only cold email can go, so only cold email is
         # fetched: replies due ahead of it can't fill the page.
         due = await self.state.get_outbox(
@@ -1199,7 +1237,9 @@ class Sender:
                     item["id"], status="failed",
                     error=f"{MAYBE_SENT_PREFIX}send error: {e}"[:300],
                 )
-                logger.warning(f"Sender: send to {item['to_email']} raised: {e}")
+                logger.warning(
+                    f"Sender: send to {item['to_email']} raised ({type(e).__name__}); "
+                    "outcome requires checking the Sent folder.")
                 continue
             if not result.ok and result.error.startswith("signature:"):
                 # The logo broke after this drain checked it, and the provider
@@ -1209,14 +1249,49 @@ class Sender:
                 logger.warning(f"Sender: {result.error} — outbox is holding.")
                 break
             if not result.ok:
+                if is_permanent_recipient_error(result.error) and prospect:
+                    await self.state.update_prospect_email(
+                        prospect.id, prospect.email, "invalid")
+                    cancelled = await self.state.cancel_pending_outbox_for_prospect(
+                        prospect.id, reason="permanent recipient rejection")
+                    await self.state.update_outbox_item(
+                        item["id"], status="failed",
+                        error="permanent recipient rejection; address marked invalid")
+                    if mailbox_id and self.mailbox_registry:
+                        mailbox = self.mailbox_registry.get(mailbox_id)
+                        if mailbox:
+                            sent_count, bounce_count, paused = await self.mailbox_registry.record_bounce(
+                                self.state, mailbox_id)
+                            if paused:
+                                logger.error(
+                                    f"Sender: paused mailbox {mailbox_id}; permanent recipient "
+                                    f"failure raised its bounce rate to {bounce_count}/{sent_count}.")
+                    bounces = await self.state.increment_setting(BOUNCE_COUNT_KEY)
+                    total_sent = await self.state.count_outbox_sent()
+                    max_rate = getattr(self.config.channels.email, "max_bounce_rate", 0.05)
+                    if total_sent >= 10 and max_rate > 0 and bounces / total_sent > max_rate:
+                        reason = (f"bounce rate {bounces}/{total_sent} exceeded "
+                                  f"{max_rate:.0%} — check list quality before resuming")
+                        await self.state.set_setting(KILL_SWITCH_KEY, reason)
+                        logger.error(f"Sender: global kill switch engaged — {reason}")
+                    logger.warning(
+                        f"Sender: permanent recipient rejection for {item['to_email']}; "
+                        f"marked invalid and cancelled {cancelled} queued email(s).")
+                    continue
                 if self.mailbox_registry and mailbox_id:
                     lower_error = result.error.lower()
-                    if any(marker in lower_error for marker in ("401", "unauthorized", "invalid_grant", "auth failed")):
+                    if any(marker in lower_error for marker in (
+                            "401", "403", "unauthorized", "forbidden",
+                            "invalid_grant", "auth failed", "authentication failed",
+                            "permission denied", "535", "credentials invalid")):
                         await self.state.set_mailbox_error(mailbox_id, result.error)
                         await self.state.update_outbox_item(
                             item["id"], status="approved", error=f"mailbox auth error: {result.error}"[:300]
                         )
-                    elif any(marker in lower_error for marker in ("429", "rate limit", "too many requests")):
+                    elif any(marker in lower_error for marker in (
+                            "429", "rate limit", "too many requests", "421",
+                            "450", "451", "452", "4.2.0", "4.3.0",
+                            "temporarily unavailable", "try again later")):
                         attempt = await self.state.mailbox_rate_limit_attempts(mailbox_id)
                         delay_minutes = (5, 15, 60)[min(attempt, 2)]
                         cooldown = _utcnow() + timedelta(minutes=delay_minutes)
@@ -1248,7 +1323,7 @@ class Sender:
                 mailbox_id=mailbox_id, **note,
             )
             if self.mailbox_registry and mailbox_id:
-                await self.state.note_mailbox_sent(mailbox_id, now_iso)
+                await self.mailbox_registry.record_send(self.state, mailbox_id, now_iso)
             if prospect.status in ("new", "queued"):
                 await self.state.update_prospect_status(prospect.id, "contacted")
 

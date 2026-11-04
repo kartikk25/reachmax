@@ -1036,7 +1036,9 @@ class Handler:
             try:
                 inbound = await provider.get_replies()
             except Exception as e:
-                logger.error(f"Handler: fetching replies failed for {mailbox_id or provider.name}: {e}")
+                logger.error(
+                    f"Handler: fetching replies failed for {mailbox_id or provider.name} "
+                    f"({type(e).__name__})")
                 self.last_read_problem = f"{mailbox_id or provider.name}: {e}"
                 if mailbox_id and any(mark in str(e).lower() for mark in
                                       ("401", "unauthorized", "invalid_grant", "auth")):
@@ -1109,9 +1111,8 @@ class Handler:
         if mailbox_id and self.mailbox_registry:
             mailbox = self.mailbox_registry.get(mailbox_id)
             if mailbox:
-                sent, bounces, paused = await self.state.record_mailbox_bounce(
-                    mailbox_id, mailbox.max_bounce_rate,
-                    self.config.channels.email.bounce_window_sends, min_sends=20)
+                sent, bounces, paused = await self.mailbox_registry.record_bounce(
+                    self.state, mailbox_id)
                 if paused:
                     logger.error(
                         f"Handler: paused mailbox {mailbox_id}; bounce rate "

@@ -90,7 +90,7 @@ def _read_token_file(token_file: Path) -> dict | None:
             if isinstance(data, dict) and data.get("refresh_token"):
                 return data
     except (OSError, json.JSONDecodeError) as e:
-        logger.warning(f"Could not read Microsoft token file: {e}")
+        logger.warning(f"Could not read Microsoft token file ({type(e).__name__})")
     return None
 
 
@@ -173,7 +173,7 @@ class MicrosoftProvider(MailProvider):
             raise GraphError(f"token refresh failed: {e}") from e
         if resp.status_code != 200:
             raise GraphError(
-                f"token refresh rejected ({resp.status_code}): {resp.text[:200]}. "
+                f"token refresh rejected ({resp.status_code}). "
                 f"Re-run '{self.auth_command}'."
             )
         data = resp.json()
@@ -215,7 +215,7 @@ class MicrosoftProvider(MailProvider):
                     continue
             break
         if resp.status_code >= 400:
-            raise GraphError(f"Graph {resp.status_code} on {method} {path}: {resp.text[:200]}")
+            raise GraphError(f"Graph {resp.status_code} on {method} {path}")
         if not resp.content:
             if resp.status_code in (202, 204):
                 return {}
@@ -285,7 +285,8 @@ class MicrosoftProvider(MailProvider):
                     await self._request("PATCH", f"/me/messages/{draft['id']}", json=content)
                 except GraphError as e:
                     # Their message is gone (deleted/moved): send unthreaded.
-                    logger.warning(f"Microsoft: createReply failed ({e}); sending as new.")
+                    logger.warning(
+                        f"Microsoft: createReply failed ({type(e).__name__}); sending as new.")
                     if draft and draft.get("id"):
                         await self._delete_draft(draft["id"])
                     draft = None
@@ -304,7 +305,7 @@ class MicrosoftProvider(MailProvider):
         except (GraphError, KeyError) as e:
             if draft and draft.get("id"):
                 await self._delete_draft(draft["id"])
-            logger.error(f"Microsoft send failed to {to_email}: {e}")
+            logger.error(f"Microsoft send failed to {to_email} ({type(e).__name__})")
             return SendResult(ok=False, error=str(e)[:300])
         return SendResult(
             ok=True,
@@ -316,7 +317,8 @@ class MicrosoftProvider(MailProvider):
         try:
             await self._request("DELETE", f"/me/messages/{draft_id}")
         except GraphError as e:
-            logger.warning(f"Microsoft: couldn't delete unsent draft {draft_id}: {e}")
+            logger.warning(
+                f"Microsoft: couldn't delete unsent draft {draft_id} ({type(e).__name__})")
 
     async def get_replies(self, limit: int = 50) -> list[InboundMessage]:
         """The last week of the inbox, newest first, minus your own mail.
@@ -552,7 +554,7 @@ def run_auth_flow(client_id: str, tenant: str = "", *, token_file=None,
         "scope": SCOPE,
     }, timeout=30)
     if resp.status_code != 200:
-        print(f"  Token exchange failed ({resp.status_code}): {resp.text[:300]}")
+        print(f"  Token exchange failed (HTTP {resp.status_code}). Check the OAuth app settings.")
         return False
     data = resp.json()
     if not data.get("refresh_token"):

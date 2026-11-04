@@ -134,6 +134,28 @@ def test_awaiting_reply_creates_no_conversation_rows(client):
     conn.close()
 
 
+def test_mailbox_filter_applies_to_awaiting_cards_and_shows_sender(client):
+    _seed(client.db_path)
+    for mailbox_id, label, address in (
+            ("sales_a", "Sales A", "alex@example.test"),
+            ("sales_b", "Sales B", "sam@example.test")):
+        _sql(client.db_path,
+             "INSERT INTO mailboxes (id, label, address, provider, status) "
+             "VALUES (?, ?, ?, 'smtp', 'active')", (mailbox_id, label, address))
+    _sql(client.db_path, "UPDATE conversations SET mailbox_id='sales_a' WHERE id='c1'")
+    _sql(client.db_path, "UPDATE outbox SET mailbox_id='sales_a' WHERE id IN ('o1','o2','o4')")
+    _sql(client.db_path, "UPDATE outbox SET mailbox_id='sales_b' WHERE id='o6'")
+
+    sales_a = client.get("/api/conversations?awaiting=1&mailbox_id=sales_a").json()
+    assert [row["id"] for row in sales_a] == ["c1"]
+    assert sales_a[0]["mailbox_label"] == "Sales A"
+    assert sales_a[0]["emails"][0]["mailbox_address"] == "alex@example.test"
+
+    sales_b = client.get("/api/conversations?awaiting=1&mailbox_id=sales_b").json()
+    assert [row["id"] for row in sales_b] == ["awaiting-p2"]
+    assert sales_b[0]["emails"][0]["mailbox_label"] == "Sales B"
+
+
 # ── Review follow-ups ──
 
 def _emailed(db, pid, status="contacted", email_status="verified", sent="sent"):

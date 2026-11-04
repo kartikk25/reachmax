@@ -72,6 +72,24 @@ class MailboxRegistry:
         """Sync YAML settings into SQLite without deleting mailbox history."""
         await state.sync_mailboxes(self.mailboxes)
 
+    async def record_send(self, state, mailbox_id: str, sent_at: str) -> None:
+        await state.note_mailbox_sent(mailbox_id, sent_at)
+
+    async def record_bounce(self, state, mailbox_id: str):
+        mailbox = self.get(mailbox_id)
+        if mailbox is None:
+            return 0, 0, False
+        return await state.record_mailbox_bounce(
+            mailbox_id, mailbox.max_bounce_rate,
+            self.config.channels.email.bounce_window_sends, min_sends=20)
+
+    async def pause(self, state, mailbox_id: str, reason: str = "Paused by operator",
+                    by: str = "user") -> bool:
+        return await state.set_mailbox_status(mailbox_id, "paused", reason, by=by)
+
+    async def resume(self, state, mailbox_id: str, by: str = "user") -> bool:
+        return await state.set_mailbox_status(mailbox_id, "active", by=by)
+
     def get(self, mailbox_id: str) -> MailboxConfig | None:
         return self.by_id.get(mailbox_id)
 

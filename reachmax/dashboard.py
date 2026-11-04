@@ -1124,6 +1124,29 @@ async def _with_context(items: list[dict]) -> list[dict]:
     return items
 
 
+def _public_outbox_error(error: str) -> str:
+    """Keep review reasons useful without returning raw provider responses."""
+    value = str(error or "")
+    lower = value.lower()
+    if not value:
+        return ""
+    if lower.startswith("may have gone out:"):
+        return "Send outcome is unknown. Check the sender's Sent folder before retrying."
+    if lower.startswith(("gate:", "precleared:", "compliance", "signature:")):
+        return value
+    if lower.startswith("permanent recipient rejection"):
+        return "Permanent recipient rejection; address marked invalid and queued sequence cancelled."
+    if lower.startswith("provider rate limit"):
+        return value.split(":", 1)[0]
+    if lower.startswith(("mailbox auth error", "provider", "smtp", "gmail", "graph")):
+        return "Provider reported an error. Check the mailbox settings and local logs."
+    if any(marker in lower for marker in (
+            "invalid_grant", "unauthorized", "authentication failed", "bearer ",
+            "password=", "secret=", "token=", "api_key=", "api-key=")):
+        return "Provider reported an error. Check the mailbox settings and local logs."
+    return value
+
+
 @app.get("/api/outbox")
 async def get_outbox_api(request: Request):
     """Outbox queue + kill-switch state for the Outbox tab."""
@@ -1136,22 +1159,37 @@ async def get_outbox_api(request: Request):
         # A send cut off mid-way shows up under Didn't send even when Reach Max
         # isn't running.
         await state.fail_stale_sending_outbox()
+        mailbox_labels = {m["id"]: m for m in await state.get_mailboxes()}
+
+        def sender_details(items):
+            for item in items:
+                mailbox = mailbox_labels.get(item.get("mailbox_id"))
+                item["mailbox_label"] = (mailbox.get("label") or mailbox["id"]
+                                         if mailbox else "")
+                item["mailbox_address"] = mailbox.get("address", "") if mailbox else ""
+                item["error"] = _public_outbox_error(item.get("error", ""))
+            return items
+
+        pending = sender_details(await _with_context(
+            await state.get_outbox(status="pending_review", limit=100, mailbox_id=mailbox_id)))
+        sending = await state.get_outbox(status="sending", limit=10, mailbox_id=mailbox_id)
+        approved = await state.get_outbox(status="approved", limit=50, mailbox_id=mailbox_id)
+        sent = await query_db(
+            "SELECT * FROM outbox WHERE status = 'sent' "
+            + ("AND mailbox_id=? " if mailbox_id else "") +
+            "ORDER BY sent_at DESC LIMIT 25", (mailbox_id,) if mailbox_id else ())
+        failed = await query_db(
+            "SELECT * FROM outbox WHERE status IN ('failed','rejected','cancelled') "
+            + ("AND mailbox_id=? " if mailbox_id else "") +
+            "ORDER BY updated_at DESC LIMIT 25", (mailbox_id,) if mailbox_id else ())
         return {
             **_compliance_view(),
             "paused": await state.get_setting("sending_paused"),
-            "pending": await _with_context(
-                await state.get_outbox(status="pending_review", limit=100, mailbox_id=mailbox_id)),
+            "pending": pending,
             # Mail going out right now leads the list.
-            "approved": (await state.get_outbox(status="sending", limit=10, mailbox_id=mailbox_id)
-                         + await state.get_outbox(status="approved", limit=50, mailbox_id=mailbox_id)),
-            "sent": (await query_db(
-                "SELECT * FROM outbox WHERE status = 'sent' "
-                + ("AND mailbox_id=? " if mailbox_id else "") +
-                "ORDER BY sent_at DESC LIMIT 25", (mailbox_id,) if mailbox_id else ())),
-            "failed": (await query_db(
-                "SELECT * FROM outbox WHERE status IN ('failed','rejected','cancelled') "
-                + ("AND mailbox_id=? " if mailbox_id else "") +
-                "ORDER BY updated_at DESC LIMIT 25", (mailbox_id,) if mailbox_id else ())),
+            "approved": sender_details(sending + approved),
+            "sent": sender_details(sent),
+            "failed": sender_details(failed),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -1217,6 +1255,7 @@ async def list_mailboxes():
             "id": mailbox.id, "label": mailbox.label or mailbox.id,
             "address": mailbox.address, "from_name": mailbox.from_name,
             "provider": mailbox.provider, "status": row.get("status"),
+            "weight": mailbox.weight, "enabled": mailbox.enabled,
             "paused_reason": (
                 "Provider authentication failed; check mailbox credentials."
                 if row.get("status") == "error" else
@@ -1889,6 +1928,8 @@ async def get_conversations(awaiting: bool = False, request: Request = None):
         LEFT JOIN prospects p ON c.prospect_id = p.id
         """ + ("WHERE c.mailbox_id=? " if mailbox_id else "")
         + "ORDER BY c.updated_at DESC LIMIT 100", (mailbox_id,) if mailbox_id else ())
+    mailbox_meta = {m["id"]: m for m in await query_db(
+        "SELECT id, label, address FROM mailboxes")}
     # The stored thread holds replies and Reach Max's answers; the cold emails
     # a reply answers live in the Outbox. Attach those (sent ones only) and
     # any answer still waiting for approval, so the page shows the exchange.
@@ -1896,16 +1937,23 @@ async def get_conversations(awaiting: bool = False, request: Request = None):
     emails: dict[str, list] = {}
     if pids:
         for e in await query_db(
-                "SELECT prospect_id, campaign_id, step, subject, body, sent_at FROM outbox "
-                f"WHERE kind = 'sequence' AND status = 'sent' AND prospect_id IN ({_in(pids)}) "
-                "ORDER BY sent_at", tuple(pids)):
+                "SELECT o.prospect_id, o.campaign_id, o.step, o.subject, o.body, o.sent_at, "
+                "o.mailbox_id, m.label AS mailbox_label, m.address AS mailbox_address "
+                "FROM outbox o LEFT JOIN mailboxes m ON m.id=o.mailbox_id "
+                f"WHERE o.kind = 'sequence' AND o.status = 'sent' AND o.prospect_id IN ({_in(pids)}) "
+                "ORDER BY o.sent_at", tuple(pids)):
             emails.setdefault(e.pop("prospect_id"), []).append(e)
     cids = [r["id"] for r in rows]
     drafts = {d.pop("conversation_id"): d for d in (await query_db(
-        "SELECT id, conversation_id, subject, body, send_at FROM outbox "
-        f"WHERE kind = 'reply' AND status = 'pending_review' AND conversation_id IN ({_in(cids)}) "
-        "ORDER BY created_at", tuple(cids)) if cids else [])}
+        "SELECT o.id, o.conversation_id, o.subject, o.body, o.send_at, o.mailbox_id, "
+        "m.label AS mailbox_label, m.address AS mailbox_address "
+        "FROM outbox o LEFT JOIN mailboxes m ON m.id=o.mailbox_id "
+        f"WHERE o.kind = 'reply' AND o.status = 'pending_review' AND o.conversation_id IN ({_in(cids)}) "
+        "ORDER BY o.created_at", tuple(cids)) if cids else [])}
     for row in rows:
+        mailbox = mailbox_meta.get(row.get("mailbox_id"))
+        row["mailbox_label"] = (mailbox.get("label") or mailbox["id"] if mailbox else "")
+        row["mailbox_address"] = mailbox.get("address", "") if mailbox else ""
         try:
             row["thread"] = json.loads(row.get("thread_json", "[]"))
         except (json.JSONDecodeError, TypeError):
@@ -1917,11 +1965,11 @@ async def get_conversations(awaiting: bool = False, request: Request = None):
                          if not camp or e.get("campaign_id") == camp]
         row["draft"] = drafts.get(row["id"])
     if awaiting:
-        rows += await _awaiting_reply()
+        rows += await _awaiting_reply(mailbox_id=mailbox_id)
     return rows
 
 
-async def _awaiting_reply() -> list[dict]:
+async def _awaiting_reply(mailbox_id: str = "") -> list[dict]:
     """Prospects Reach Max emailed who haven't replied yet, shaped like a
     conversation so the tab can show every sent email, not only the ones
     that got an answer. Read-only: no conversation row is created, and the
@@ -1931,28 +1979,37 @@ async def _awaiting_reply() -> list[dict]:
     # one past the tab's latest 100), a bounced address, or who's otherwise done
     # isn't. Bounded because this runs on every load of the tab.
     sent = await query_db(
-        "SELECT o.prospect_id, o.step, o.subject, o.body, o.sent_at, "
+        "SELECT o.prospect_id, o.mailbox_id, o.step, o.subject, o.body, o.sent_at, "
+        "m.label AS mailbox_label, m.address AS mailbox_address, "
         "p.first_name, p.last_name, p.email AS prospect_email, p.company, "
         "p.status AS prospect_status FROM outbox o "
+        "LEFT JOIN mailboxes m ON m.id=o.mailbox_id "
         "JOIN prospects p ON p.id = o.prospect_id "
         "WHERE o.kind = 'sequence' AND o.status = 'sent' "
+        + ("AND o.mailbox_id=? " if mailbox_id else "") +
         "AND p.status NOT IN ('replied', 'opted_out', 'lost', 'meeting', 'closed') "
         "AND COALESCE(p.email_status, '') != 'invalid' "
         "AND NOT EXISTS (SELECT 1 FROM conversations c JOIN prospects q ON q.id = c.prospect_id "
         "WHERE q.id = p.id OR (q.company_id = p.company_id AND COALESCE(p.company_id, '') != '')) "
-        "ORDER BY o.sent_at DESC LIMIT 2000")
+        "ORDER BY o.sent_at DESC LIMIT 2000", (mailbox_id,) if mailbox_id else ())
     for e in reversed(sent):
         pid = e["prospect_id"]
         row = waiting.setdefault(pid, {
             "id": "awaiting-" + pid, "prospect_id": pid, "campaign_id": "",
             "channel": "email", "intent": "", "stage": "", "status": "awaiting_reply",
             "thread": [], "draft": None, "emails": [],
+            "mailbox_id": e.get("mailbox_id") or "",
+            "mailbox_label": e.get("mailbox_label") or e.get("mailbox_id") or "",
+            "mailbox_address": e.get("mailbox_address") or "",
             "first_name": e.get("first_name") or "", "last_name": e.get("last_name") or "",
             "prospect_email": e.get("prospect_email") or "", "company": e.get("company") or "",
             "prospect_status": e.get("prospect_status") or "",
         })
         row["emails"].append({"step": e["step"], "subject": e["subject"],
-                              "body": e["body"], "sent_at": e["sent_at"]})
+                              "body": e["body"], "sent_at": e["sent_at"],
+                              "mailbox_id": e.get("mailbox_id") or "",
+                              "mailbox_label": e.get("mailbox_label") or e.get("mailbox_id") or "",
+                              "mailbox_address": e.get("mailbox_address") or ""})
         row["created_at"] = row.get("created_at") or e["sent_at"]
         row["updated_at"] = e["sent_at"]
     return sorted(waiting.values(), key=lambda r: r.get("updated_at") or "", reverse=True)

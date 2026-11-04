@@ -430,8 +430,18 @@ function loadCurrentTab() {
 
 function setMailboxFilter(value) {
   selectedMailbox = value || '';
-  try { localStorage.setItem('reachmax-mailbox-view', selectedMailbox); } catch { /* ignore */ }
+  try { sessionStorage.setItem('reachmax-mailbox-view', selectedMailbox); } catch { /* ignore */ }
+  const selector = document.getElementById('mailbox-filter');
+  updateMailboxScope(selector && selector.selectedOptions[0]
+    ? selector.selectedOptions[0].textContent.split(' · ')[0] : selectedMailbox);
   loadCurrentTab();
+}
+
+function updateMailboxScope(label) {
+  const scope = document.getElementById('mailbox-scope');
+  if (scope) scope.textContent = selectedMailbox
+    ? 'Viewing: ' + (label || selectedMailbox)
+    : 'Viewing: All mailboxes (Master)';
 }
 
 async function loadMailboxes() {
@@ -443,10 +453,12 @@ async function loadMailboxes() {
   const filter = document.getElementById('mailbox-filter');
   if (filter) {
     const current = selectedMailbox;
-    filter.innerHTML = '<option value="">All mailboxes</option>' + rows.map(m =>
+    filter.innerHTML = '<option value="">All mailboxes (Master)</option>' + rows.map(m =>
       '<option value="' + escHtml(m.id) + '">' + escHtml(m.label) + ' · ' + escHtml(m.address) + '</option>'
     ).join('');
     filter.value = current;
+    const selected = rows.find(m => m.id === current);
+    updateMailboxScope(selected ? selected.label : current);
   }
   const complianceBlock = data.cold_send_block_reason
     ? '<div class="card" role="alert"><b>Cold sending is blocked.</b> ' + escHtml(data.cold_send_block_reason) + '</div>' : '';
@@ -464,7 +476,7 @@ async function loadMailboxes() {
         '<td>' + (m.warmup_days_to_ramp ? Number(m.warmup_days_to_ramp) + ' days to ramp' : 'At current cap') + '</td>' +
         '<td>' + escHtml(m.next_send_slot || 'Open') + '</td><td>' +
         '<button class="btn btn-secondary btn-sm" onclick="mailboxTest(' + jsq(m.id) + ')">Test</button> ' +
-        '<button class="btn btn-secondary btn-sm" onclick="mailboxEdit(' + jsq(m.id) + ',' + jsq(m.label) + ',' + jsq(m.from_name) + ',' + Number(m.max_daily_sends) + ')">Edit</button> ' +
+        '<button class="btn btn-secondary btn-sm" onclick="mailboxEdit(' + jsq(m.id) + ',' + jsq(m.label) + ',' + jsq(m.from_name) + ',' + Number(m.max_daily_sends) + ',' + Number(m.weight || 1) + ',' + jsq(m.send_window && m.send_window.start || '05:00') + ',' + jsq(m.send_window && m.send_window.end || '17:00') + ',' + (m.enabled !== false) + ')">Edit</button> ' +
         (m.status === 'paused' || m.status === 'error' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'resume\')">Resume</button>' :
           m.status === 'active' || m.status === 'warming' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'pause\')">Pause</button>' : '') + '</td></tr>').join('') +
       '</tbody></table></div>';
@@ -487,6 +499,26 @@ async function mailboxTest(id) {
   else showToast(result && result.detail ? result.detail : 'Connection check failed.', 'error');
 }
 
+function mailboxEnvInstructions(id, provider, address) {
+  const prefix = 'REACHMAX_MAILBOX_' + String(id).replace(/[^A-Za-z0-9]/g, '_').toUpperCase() + '_';
+  if (provider === 'smtp') return [
+    prefix + 'SMTP_HOST=', prefix + 'SMTP_PORT=587',
+    prefix + 'SMTP_USERNAME=' + address, prefix + 'SMTP_PASSWORD=',
+    prefix + 'IMAP_HOST=', prefix + 'IMAP_PORT=993',
+    prefix + 'IMAP_USERNAME=' + address, prefix + 'IMAP_PASSWORD=',
+  ].join('\n');
+  if (provider === 'gmail') return [
+    prefix + 'GMAIL_CLIENT_ID=  # optional if configured globally',
+    prefix + 'GMAIL_CLIENT_SECRET=  # optional if configured globally',
+    'Then run: reachmax gmail auth --mailbox ' + id,
+  ].join('\n');
+  return [
+    prefix + 'M365_CLIENT_ID=  # optional if configured globally',
+    prefix + 'M365_TENANT_ID=  # optional if configured globally',
+    'Then run: reachmax microsoft auth --mailbox ' + id,
+  ].join('\n');
+}
+
 async function mailboxAdd() {
   const id = (prompt('Mailbox ID (short slug):') || '').trim();
   if (!id) return;
@@ -495,17 +527,28 @@ async function mailboxAdd() {
   const from_name = (prompt('Real sender name:') || '').trim();
   const provider = (prompt('Provider: gmail, microsoft, or smtp', 'gmail') || '').trim().toLowerCase();
   const max_daily_sends = Number(prompt('Daily send cap:', '40'));
+  const startValue = prompt('Send window start:', '05:00');
+  if (startValue === null) return;
+  const endValue = prompt('Send window end:', '17:00');
+  if (endValue === null) return;
+  const start = startValue.trim(), end = endValue.trim();
+  const weight = Number(prompt('Distribution weight:', '1'));
   if (!label || !address || !from_name || !Number.isInteger(max_daily_sends)) {
     showToast('Mailbox details are incomplete.', 'error'); return;
   }
   const result = await api('/api/mailboxes', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({id, label, address, from_name, provider, max_daily_sends})});
-  if (result && result.success) { showToast('Mailbox added. Configure its credentials in .env.'); loadMailboxes(); }
+    body: JSON.stringify({id, label, address, from_name, provider, max_daily_sends, weight,
+      send_window: {start, end}})});
+  if (result && result.success) {
+    loadMailboxes();
+    prompt('Mailbox added. Copy these provider settings into .env:',
+      mailboxEnvInstructions(id, provider, address));
+  }
   else showToast(failMsg(result, 'Mailbox could not be added.'), 'error');
 }
 
-async function mailboxEdit(id, oldLabel, oldName, oldCap) {
+async function mailboxEdit(id, oldLabel, oldName, oldCap, oldWeight, oldStart, oldEnd, oldEnabled) {
   const label = prompt('Mailbox label:', oldLabel);
   if (label === null) return;
   const from_name = prompt('Real sender name:', oldName);
@@ -513,17 +556,27 @@ async function mailboxEdit(id, oldLabel, oldName, oldCap) {
   const cap = prompt('Daily send cap:', String(oldCap));
   if (cap === null) return;
   const max_daily_sends = Number(cap);
-  if (!label.trim() || !from_name.trim() || !Number.isInteger(max_daily_sends)) {
+  const weight = Number(prompt('Distribution weight:', String(oldWeight || 1)));
+  const start = prompt('Send window start:', oldStart || '05:00');
+  if (start === null) return;
+  const end = prompt('Send window end:', oldEnd || '17:00');
+  if (end === null) return;
+  const enabledValue = prompt('Enabled? enter true or false:', oldEnabled === false ? 'false' : 'true');
+  if (enabledValue === null) return;
+  const enabled = enabledValue.trim().toLowerCase() === 'true';
+  if (!label.trim() || !from_name.trim() || !Number.isInteger(max_daily_sends) ||
+      !Number.isInteger(weight) || !['true', 'false'].includes(enabledValue.trim().toLowerCase())) {
     showToast('Mailbox details are invalid.', 'error'); return;
   }
   const result = await api('/api/mailboxes/' + encodeURIComponent(id), {method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({label: label.trim(), from_name: from_name.trim(), max_daily_sends})});
+    body: JSON.stringify({label: label.trim(), from_name: from_name.trim(), max_daily_sends,
+      weight, enabled, send_window: {start: start.trim(), end: end.trim()}})});
   if (result && result.success) { showToast('Mailbox updated.'); loadMailboxes(); }
   else showToast(failMsg(result, 'Mailbox could not be updated.'), 'error');
 }
 
-try { selectedMailbox = localStorage.getItem('reachmax-mailbox-view') || ''; } catch { /* ignore */ }
+try { selectedMailbox = sessionStorage.getItem('reachmax-mailbox-view') || ''; } catch { /* ignore */ }
 
 // ── Today: what needs a human ──
 
@@ -1987,12 +2040,16 @@ function renderDesk(items, i) {
         'Edit <kbd>E</kbd></button>' +
       '<button class="btn btn-secondary" onclick="outboxAct(' + jsq(cur.id) + ',\'reject\')">' +
         'Reject <kbd>R</kbd></button>';
+  const sender = cur.mailbox_label
+    ? 'From ' + cur.mailbox_label + (cur.mailbox_address ? ' <' + cur.mailbox_address + '>' : '')
+    : 'Sender assigned automatically when sending';
 
   return '<div class="desk">' +
     '<div class="desk-list">' + rail + '</div>' +
     '<div class="desk-pane">' +
       '<div class="to-line">To <b>' + escHtml(cur.to_email) + '</b>' +
         '<span class="tag">' + (cur.kind === 'reply' ? 'Reply' : 'Email ' + escHtml(String(cur.step))) + '</span>' +
+        '<span class="muted">' + escHtml(sender) + '</span>' +
         '<span class="muted">sends ' + formatDate(cur.send_at) + '</span></div>' +
       renderDeskContext(cur.context) +
       (heldReason(cur)
@@ -2671,6 +2728,8 @@ function convoCard(c) {
     if (it.email) {
       return '<div class="thread-email"><div class="te-head">' + icon('campaigns') +
         '<b>Email ' + escHtml(String(it.email.step)) + '</b><span>' + escHtml(it.email.subject) + '</span>' +
+        '<span class="muted">From ' + escHtml(it.email.mailbox_label || it.email.mailbox_id || 'unknown mailbox') +
+        (it.email.mailbox_address ? ' &lt;' + escHtml(it.email.mailbox_address) + '&gt;' : '') + '</span>' +
         '<span class="te-when">' + relTime(it.email.sent_at) + '</span></div>' +
         '<div class="te-body">' + escHtml(it.email.body) + '</div></div>';
     }
@@ -2689,7 +2748,8 @@ function convoCard(c) {
   return '<div class="convo-card"><div class="convo-head">' +
     '<span class="avatar">' + initials(c.first_name, c.last_name) + '</span>' +
     '<div><h3>' + escHtml(name) + '</h3><div class="sub">' +
-      escHtml([c.company, c.prospect_email].filter(Boolean).join(' · ')) + ' · ' + relTime(c.updated_at) + '</div></div>' +
+      escHtml([c.company, c.prospect_email, c.mailbox_label ? 'Via ' + c.mailbox_label : ''].filter(Boolean).join(' · ')) +
+      ' · ' + relTime(c.updated_at) + '</div></div>' +
     // An escalation's intent badge says the same as its status: show one.
     '<div class="tags">' + (c.intent && !(c.status === 'needs_human' && c.intent === 'escalate') ? badge(c.intent) : '') +
       stage + badge(c.status) + '</div></div>' +

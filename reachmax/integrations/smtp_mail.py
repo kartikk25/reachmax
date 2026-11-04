@@ -93,7 +93,7 @@ class SmtpImapProvider(MailProvider):
                 timeout=30,
             )
         except Exception as e:
-            logger.error(f"SMTP send failed to {to_email}: {e}")
+            logger.error(f"SMTP send failed to {to_email} ({type(e).__name__})")
             return SendResult(ok=False, error=str(e)[:300])
         return SendResult(ok=True, message_id=message_id, thread_ref=message_id)
 
@@ -102,7 +102,7 @@ class SmtpImapProvider(MailProvider):
         try:
             return await loop.run_in_executor(None, self._fetch_unseen, limit)
         except Exception as e:
-            logger.error(f"IMAP fetch failed: {e}")
+            logger.error(f"IMAP fetch failed ({type(e).__name__})")
             return []
 
     def _fetch_unseen(self, limit: int) -> list[InboundMessage]:
