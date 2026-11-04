@@ -26,6 +26,7 @@ from reachmax.gate import autopilot_review, do_not_contact_match, pre_send_check
 from reachmax.send_window import in_window, next_send_time, recipient_country, recipient_zone
 from reachmax.integrations.instantly import InstantlyClient
 from reachmax.integrations.mail_provider import NATIVE_PROVIDERS, get_mail_provider
+from reachmax.mailboxes import MailboxRegistry
 from reachmax.integrations.precleared import PreclearedClient, clear_hold, record_hold
 from reachmax.integrations.signature import signature_problem
 from reachmax.sending_mode import SIGNATURE_HOLD_PREFIX, sync_sending_mode
@@ -93,6 +94,10 @@ class Sender:
         self.config = config
         self.instantly = InstantlyClient(env.instantly_api_key)
         self.provider = get_mail_provider(config, env)
+        email_config = getattr(getattr(config, "channels", None), "email", None)
+        self.mailbox_registry = (MailboxRegistry(config, env)
+                                 if getattr(email_config, "mailboxes", None) else None)
+        self._mailbox_providers = {}
         # Optional per-recipient compliance check; None unless enabled.
         self.precleared = PreclearedClient.from_config(config, env)
         # Domains whose check failed since Precleared last answered. Kept
@@ -807,7 +812,7 @@ class Sender:
             # Check switched off: cold email no longer waits on it, so a
             # hold recorded while it was on must not stay on Today.
             await clear_hold(self.state)
-        if not self.provider.is_configured():
+        if not self.mailbox_registry and not self.provider.is_configured():
             logger.warning(
                 f"Sender: mail provider '{self.provider.name}' is not configured "
                 "yet — outbox is holding. See CLAUDE.md → provider setup."
@@ -821,7 +826,8 @@ class Sender:
             await self.state.note_sends_held(f"{SIGNATURE_HOLD_PREFIX}{problem}")
             return
 
-        max_daily = self.config.channels.email.max_daily_sends
+        max_daily = (sum(m.max_daily_sends for m in self.mailbox_registry.mailboxes)
+                     if self.mailbox_registry else self.config.channels.email.max_daily_sends)
         sent_today = await self.state.count_outbox_sent_today()
         budget = min(MAX_SENDS_PER_CYCLE, max_daily - sent_today)
         if budget <= 0:
@@ -829,7 +835,8 @@ class Sender:
             return
         # Cold email has its own cap under the warmup ramp; replies don't.
         # Counted from local midnight, the day the ramp counts in.
-        cold_cap = cold_daily_cap(self.config.channels.email)
+        cold_cap = (sum(self.mailbox_registry.effective_cap(m.id) for m in self.mailbox_registry.mailboxes)
+                    if self.mailbox_registry else cold_daily_cap(self.config.channels.email))
         midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
         cold_left = cold_cap - await self.state.count_outbox_sent_today(
             kind="sequence",
@@ -907,6 +914,52 @@ class Sender:
                 await self.state.update_outbox_item(
                     item["id"], status=blocked[0], error=blocked[1])
                 continue
+            send_provider = self.provider
+            mailbox_id = item.get("mailbox_id") or getattr(prospect, "mailbox_id", None)
+            if self.mailbox_registry:
+                if not prospect:
+                    continue
+                runtime = {m["id"]: m for m in await self.state.get_mailboxes()}
+                ids = [mailbox_id] if mailbox_id else [m.id for m in self.mailbox_registry.mailboxes]
+                operator_zone = operator_timezone(self.config)
+                counts, last_sent, eligible_ids = {}, {}, []
+                now_dt = _utcnow()
+                for mid in ids:
+                    if not mid or mid not in runtime:
+                        continue
+                    row = runtime[mid]
+                    counts[mid] = await self.state.count_mailbox_sent_today(
+                        mid, timezone_name=operator_zone, now=now_dt)
+                    last = row.get("last_sent_at")
+                    try:
+                        last_sent[mid] = datetime.fromisoformat(last) if last else None
+                    except (TypeError, ValueError):
+                        last_sent[mid] = None
+                    if not prospect.timezone:
+                        prospect.timezone = await self._zone_or_default(prospect)
+                    if self.mailbox_registry.eligible(
+                            mid, now_dt, prospect, status=row.get("status", "active"),
+                            sent_today=counts[mid], last_sent_at=last_sent[mid],
+                            kind=item["kind"]):
+                        eligible_ids.append(mid)
+                if not mailbox_id:
+                    mailbox_id = await self.mailbox_registry.assign(
+                        self.state, prospect, item["id"], eligible_ids, counts, last_sent)
+                elif mailbox_id not in eligible_ids:
+                    # Sticky follow-ups and replies remain queued until their
+                    # original identity is eligible again.
+                    continue
+                if not mailbox_id:
+                    continue
+                if mailbox_id not in eligible_ids:
+                    continue
+                item["mailbox_id"] = mailbox_id
+                send_provider = self._mailbox_providers.get(mailbox_id)
+                if send_provider is None:
+                    send_provider = self.mailbox_registry.provider(mailbox_id)
+                    self._mailbox_providers[mailbox_id] = send_provider
+                if send_provider is None or not send_provider.is_configured():
+                    continue
             order = await self._follow_up_order(item, prospect)
             if order == "wait":
                 continue
@@ -920,7 +973,7 @@ class Sender:
             names = await self._recipient_names(prospect) if needs_check else ("", "")
             # Cold email waits for the recipient's send window, however
             # late it was approved; replies don't.
-            if (window is not None and item["kind"] == "sequence"
+            if (not self.mailbox_registry and window is not None and item["kind"] == "sequence"
                     and await self._outside_window(
                         item, await self._zone_or_default(prospect, given=country, names=names),
                         window)):
@@ -1008,6 +1061,12 @@ class Sender:
 
             # Claim it. A reply, bounce, hand send or rejection may have
             # cancelled it since the queue was read; then it stays cancelled.
+            if self.mailbox_registry and item["kind"] == "sequence":
+                minimum_gap = max(
+                    0, self.config.channels.email.send_interval_seconds
+                    - self.config.channels.email.send_jitter_seconds)
+                if not await self.state.reserve_global_send_slot(minimum_gap, _utcnow()):
+                    continue
             if not await self.state.claim_outbox_item(item["id"]):
                 continue
             # Send the email as it is now, not as the queue read it: it may
@@ -1025,7 +1084,7 @@ class Sender:
 
             body = self._outgoing_body(item)
             try:
-                result = await self.provider.send_email(
+                result = await send_provider.send_email(
                     item["to_email"], item["subject"], body,
                     thread_ref=item.get("thread_ref", ""),
                     in_reply_to=item.get("in_reply_to", ""),
@@ -1059,8 +1118,11 @@ class Sender:
             note = {"error": ""} if (item.get("error") or "").startswith(RECHECK_PREFIX) else {}
             await self.state.update_outbox_item(
                 item["id"], status="sent", sent_at=now_iso, body=body,
-                message_id=result.message_id, thread_ref=result.thread_ref, **note,
+                message_id=result.message_id, thread_ref=result.thread_ref,
+                mailbox_id=mailbox_id, **note,
             )
+            if self.mailbox_registry and mailbox_id:
+                await self.state.note_mailbox_sent(mailbox_id, now_iso)
             if prospect.status in ("new", "queued"):
                 await self.state.update_prospect_status(prospect.id, "contacted")
 
@@ -1080,7 +1142,8 @@ class Sender:
                     logger.debug(f"Sender: convo append failed: {e}")
             details = {
                 "to": item["to_email"], "step": item["step"],
-                "kind": item["kind"], "provider": self.provider.name,
+                "kind": item["kind"], "provider": send_provider.name,
+                **({"mailbox_id": mailbox_id} if mailbox_id else {}),
             }
             if receipt_id:
                 details["precleared_receipt"] = receipt_id
@@ -1091,12 +1154,17 @@ class Sender:
             )
             logger.info(
                 f"Sender: sent step {item['step']} to {item['to_email']} "
-                f"via {self.provider.name}."
+                f"via {send_provider.name}."
             )
             # Human-ish pacing BETWEEN sends (not after the last, and never
             # in tests where pacing is disabled).
             if self.send_pacing and sent < budget:
-                await asyncio.sleep(random.uniform(*SEND_JITTER_SECONDS))
+                interval = self.config.channels.email.send_interval_seconds
+                jitter = self.config.channels.email.send_jitter_seconds
+                if self.mailbox_registry:
+                    await asyncio.sleep(random.uniform(max(0, interval - jitter), interval + jitter))
+                else:
+                    await asyncio.sleep(random.uniform(*SEND_JITTER_SECONDS))
 
         self.compliance_held = compliance_paused
         if outside_window:

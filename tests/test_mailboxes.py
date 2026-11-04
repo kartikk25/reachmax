@@ -205,3 +205,15 @@ async def test_mailbox_assignment_is_sticky_at_company_level(tmp_path):
     assert await state.assign_outbox_mailbox(prospect_b.id, outbox_b, "sales_b") == "sales_a"
     assert (await state.get_prospect(prospect_b.id)).mailbox_id == "sales_a"
     assert (await state.get_outbox_item(outbox_b))["mailbox_id"] == "sales_a"
+
+
+@pytest.mark.asyncio
+async def test_global_cold_send_slot_persists_across_reservations(tmp_path):
+    from datetime import datetime, timedelta
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    now = datetime(2026, 1, 5, 12, 0)
+    assert await state.reserve_global_send_slot(11, now)
+    assert not await state.reserve_global_send_slot(11, now + timedelta(seconds=10))
+    assert await state.reserve_global_send_slot(11, now + timedelta(seconds=11))

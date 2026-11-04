@@ -755,6 +755,37 @@ class StateManager:
                 (str(uuid.uuid4()), mailbox_id, kind, detail))
             await db.commit()
 
+    async def count_mailbox_sent_today(self, mailbox_id: str, kind: str | None = None,
+                                       timezone_name: str = "UTC", now: datetime | None = None) -> int:
+        """Count sends between local midnight and the next local midnight."""
+        import pytz
+        zone = pytz.timezone(timezone_name or "UTC")
+        instant = now or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            instant = pytz.utc.localize(instant)
+        local = instant.astimezone(zone)
+        start = zone.localize(datetime.combine(local.date(), datetime.min.time())).astimezone(pytz.utc)
+        end = zone.localize(datetime.combine(local.date() + timedelta(days=1), datetime.min.time())).astimezone(pytz.utc)
+        sql = ("SELECT COUNT(*) FROM outbox WHERE mailbox_id=? AND status='sent' "
+               "AND sent_at >= ? AND sent_at < ?")
+        params: tuple = (mailbox_id, start.replace(tzinfo=None).isoformat(), end.replace(tzinfo=None).isoformat())
+        if kind:
+            sql += " AND kind=?"
+            params += (kind,)
+        async with self._connect() as db:
+            async with db.execute(sql, params) as cursor:
+                return (await cursor.fetchone())[0]
+
+    async def note_mailbox_sent(self, mailbox_id: str, sent_at: str) -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "UPDATE mailboxes SET last_sent_at=?, last_error='', last_error_at=NULL, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?", (sent_at, mailbox_id))
+            await db.execute(
+                "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, 'sent', '')",
+                (str(uuid.uuid4()), mailbox_id))
+            await db.commit()
+
     # ── Companies ──
 
     @staticmethod
@@ -2264,6 +2295,31 @@ class StateManager:
                 (key, str(value)),
             )
             await db.commit()
+
+    async def reserve_global_send_slot(self, minimum_gap_seconds: int,
+                                       now: datetime | None = None) -> bool:
+        """Persistently reserve one global cold-send slot across processes."""
+        instant = now or datetime.now(timezone.utc).replace(tzinfo=None)
+        if instant.tzinfo is not None:
+            instant = instant.astimezone(timezone.utc).replace(tzinfo=None)
+        stamp = instant.isoformat()
+        async with self._connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute("SELECT value FROM settings WHERE key='last_global_cold_send_slot'") as cursor:
+                row = await cursor.fetchone()
+            if row and row[0]:
+                try:
+                    previous = datetime.fromisoformat(row[0])
+                    if (instant - previous).total_seconds() < minimum_gap_seconds:
+                        await db.rollback()
+                        return False
+                except ValueError:
+                    pass
+            await db.execute(
+                "INSERT INTO settings(key, value) VALUES('last_global_cold_send_slot', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (stamp,))
+            await db.commit()
+            return True
 
     async def increment_setting(self, key: str, by: int = 1) -> int:
         current = await self.get_setting(key, "0")

@@ -114,7 +114,8 @@ class MailboxRegistry:
     def eligible(self, mailbox_id: str, now: datetime, recipient=None, *,
                  status: str = "active", sent_today: int = 0,
                  last_sent_at: datetime | None = None,
-                 cooldown_until: datetime | None = None) -> bool:
+                 cooldown_until: datetime | None = None,
+                 kind: str = "sequence") -> bool:
         """Apply state, mailbox cap, per-mailbox gap, cooldown, and local window."""
         mailbox = self.get(mailbox_id)
         if mailbox is None or not mailbox.enabled or status not in {"active", "warming"}:
@@ -125,7 +126,8 @@ class MailboxRegistry:
             now_utc = now.astimezone(pytz.utc)
         operator_tz = pytz.timezone(operator_timezone(self.config))
         today = now_utc.astimezone(operator_tz).date()
-        cap = self.effective_cap(mailbox_id, today)
+        cap = (self.effective_cap(mailbox_id, today) if kind == "sequence"
+               else mailbox.max_daily_sends)
         if cap <= 0 or sent_today >= cap:
             return False
         if cooldown_until is not None and now < cooldown_until:
@@ -133,6 +135,8 @@ class MailboxRegistry:
         gap = self.config.channels.email.min_gap_per_mailbox_seconds
         if last_sent_at is not None and now - last_sent_at < timedelta(seconds=gap):
             return False
+        if kind != "sequence":
+            return True
         window = self.window(mailbox_id)
         if window is None:
             return True

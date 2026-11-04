@@ -25,6 +25,7 @@ minor versions can still change behaviour.
 - Phase 3 test run on Python 3.14: 2,812 passed, 184 skipped.
 - Added mailbox warmup-cap calculation, per-mailbox window overrides, recipient/mailbox/fixed timezone modes with IANA validation, eligibility checks, and least-used/round-robin/weighted selection primitives.
 - Added atomic company/prospect/outbox mailbox assignment for sticky sender identity, and fixed the startup backfill to run only when mailbox columns are first added so later sends remain unassigned until selected.
+- Wired configured mailbox providers into native outbox sends, applying per-mailbox eligibility and caps, preserving sticky assignments, recording send events, and reserving global cold-send slots transactionally in SQLite across restarts.
 
 ### Added
 
