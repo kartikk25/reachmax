@@ -303,7 +303,9 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
     handler = Handler(brain, state, config, env)
     analyst = Analyst(state)
 
-    interval = config.usage.heartbeat_interval_minutes * 60
+    interval = (config.usage.heartbeat_interval_seconds
+                if config.usage.heartbeat_interval_seconds is not None
+                else config.usage.heartbeat_interval_minutes * 60)
     max_calls = max(int(200 * (config.usage.max_daily_claude_percent / 100)), 1)
     consecutive_errors = 0
 
@@ -344,7 +346,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             if send_only and not await sender.cold_due_in_window():
                 logger.info(
                     f"Quiet hours. No cold email can go now; checking again in "
-                    f"{config.usage.heartbeat_interval_minutes} minutes."
+                    f"{interval} seconds."
                 )
                 if await _interruptible_sleep(interval, stop_event):
                     break
@@ -358,7 +360,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             if problem:
                 logger.error(
                     f"Reach Max is paused: {problem} Nothing was sent or changed. "
-                    f"Re-checking in {config.usage.heartbeat_interval_minutes} minutes."
+                    f"Re-checking in {interval} seconds."
                 )
                 if await _interruptible_sleep(interval, stop_event):
                     break
@@ -460,7 +462,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
 
             # 7. Sleep until next heartbeat
             logger.info(
-                f"Cycle complete. Sleeping for {config.usage.heartbeat_interval_minutes} minutes."
+                f"Cycle complete. Sleeping for {interval} seconds."
             )
             if await _interruptible_sleep(interval, stop_event):
                 break

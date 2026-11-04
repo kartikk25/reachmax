@@ -752,6 +752,7 @@ class QuietHoursConfig(BaseModel):
 class UsageConfig(BaseModel):
     max_daily_claude_percent: float = 80.0
     heartbeat_interval_minutes: int = 15
+    heartbeat_interval_seconds: int | None = None
     quiet_hours: QuietHoursConfig = QuietHoursConfig()
 
     @field_validator("max_daily_claude_percent")
@@ -766,6 +767,13 @@ class UsageConfig(BaseModel):
     def _valid_interval(cls, v: int) -> int:
         if v < 1:
             raise ValueError("heartbeat_interval_minutes must be at least 1")
+        return v
+
+    @field_validator("heartbeat_interval_seconds")
+    @classmethod
+    def _valid_interval_seconds(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            raise ValueError("heartbeat_interval_seconds must be at least 1")
         return v
 
 

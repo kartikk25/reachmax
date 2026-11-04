@@ -127,6 +127,8 @@ channels:
 usage:
   max_daily_claude_percent: 80
   heartbeat_interval_minutes: 15
+  # Optional override for faster cycles; omit to use the minutes value above.
+  # heartbeat_interval_seconds: 15
   quiet_hours:
     start: "22:00"
     end: "07:00"

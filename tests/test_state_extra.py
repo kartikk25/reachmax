@@ -240,6 +240,13 @@ async def test_reply_dedup_distinct_ids(state):
     assert not await state.is_reply_processed("r2")
 
 
+@pytest.mark.asyncio
+async def test_reply_dedup_is_scoped_to_mailbox(state):
+    await state.mark_reply_processed("same-message-id", "sales-a")
+    assert await state.is_reply_processed("same-message-id", "sales-a")
+    assert not await state.is_reply_processed("same-message-id", "sales-b")
+
+
 # ── Feedback ──
 
 @pytest.mark.asyncio

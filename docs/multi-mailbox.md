@@ -4,6 +4,10 @@ Reach Max keeps the existing prospecting pipeline and adds mailbox-specific
 sender identities and runtime state. With no configured `mailboxes` list it
 continues using one synthesized `default` mailbox.
 
+The heartbeat remains 15 minutes by default, independently of the global
+send pace. Set `usage.heartbeat_interval_seconds` for a shorter cycle; when
+omitted, `usage.heartbeat_interval_minutes` controls the heartbeat.
+
 ## Configure a pool
 
 Add entries under `channels.email.mailboxes` in `reachmax.yaml` (or your local

@@ -176,6 +176,7 @@ def pre_send_check(
     kind: str = "sequence",
     postal_address: str = "",
     do_not_contact=(),
+    from_email: str = "",
 ) -> GateResult:
     """Run every deterministic check. Returns ok=False with reasons on any hit.
 
@@ -439,7 +440,8 @@ def _instruction_runs(root) -> dict[tuple, str]:
     return _leak_cache["runs"]
 
 
-def autopilot_review(subject: str, body: str, config, root=None, recipient: str = "") -> list[str]:
+def autopilot_review(subject: str, body: str, config, root=None, recipient: str = "",
+                     from_email: str = "") -> list[str]:
     """Why an email nobody approved must wait for a human, or [] to send.
 
     Two things a planted instruction would try: point the reader somewhere
@@ -450,6 +452,9 @@ def autopilot_review(subject: str, body: str, config, root=None, recipient: str 
     reasons: list[str] = []
     text = f"{subject or ''}\n{body or ''}"
     allowed = allowed_link_domains(config)
+    sender = from_email or getattr(getattr(config, "persona", None), "email", "")
+    if sender and "@" in sender:
+        allowed.add(_host(sender.rsplit("@", 1)[1]))
     if "@" in (recipient or ""):
         allowed.add(_host(recipient.rsplit("@", 1)[1]))
     prefix = _booking_prefix(config)

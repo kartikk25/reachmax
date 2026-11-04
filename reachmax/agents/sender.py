@@ -802,11 +802,15 @@ class Sender:
             colleague = await self.state.colleague_who_replied(prospect.id)
             if colleague:
                 return "cancelled", f"{COLLEAGUE_REPLIED} ({colleague})"
+        mailbox = (self.mailbox_registry.get(item.get("mailbox_id"))
+                   if self.mailbox_registry and item.get("mailbox_id") else None)
+        from_email = mailbox.address if mailbox else self.config.persona.email
         gate = pre_send_check(
             item["to_email"], item["subject"], self._outgoing_body(item),
             prospect=prospect, allow_risky=allow_risky, kind=item["kind"],
             postal_address=compliance_of(self.config).postal_address,
             do_not_contact=live_do_not_contact(self.config),
+            from_email=from_email,
         )
         if not gate:
             logger.warning(
@@ -822,7 +826,7 @@ class Sender:
             # Nobody approved this one (autopilot): what a planted
             # instruction would add sends it back to you instead.
             held = autopilot_review(item["subject"], self._outgoing_body(item), self.config,
-                                    recipient=item["to_email"])
+                                    recipient=item["to_email"], from_email=from_email)
             if held:
                 logger.warning(f"Sender: holding email to {item['to_email']} for review: {held}")
                 return "pending_review", (HELD_FOR_REVIEW + "; ".join(held))[:300]

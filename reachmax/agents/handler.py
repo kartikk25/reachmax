@@ -1036,7 +1036,7 @@ class Handler:
             mailbox_complete = True
             for msg in inbound:
                 dedup_key = msg.provider_id or msg.message_id
-                if not dedup_key or await self.state.is_reply_processed(dedup_key):
+                if not dedup_key or await self.state.is_reply_processed(dedup_key, mailbox_id):
                     continue
                 consumed = True
                 try:
@@ -1060,7 +1060,7 @@ class Handler:
                     mailbox_complete = complete = False
                 finally:
                     if consumed:
-                        await self.state.mark_reply_processed(dedup_key)
+                        await self.state.mark_reply_processed(dedup_key, mailbox_id)
             if mailbox_complete:
                 provider.confirm_read()
 

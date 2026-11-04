@@ -221,6 +221,12 @@ def test_their_own_site_and_ordinary_prose_pass(body):
     assert autopilot_review("hi", body, _cfg(), recipient="joe@joesroofing.example") == []
 
 
+def test_sender_mailbox_domain_is_allowed():
+    body = "More details at sender-domain.example/overview"
+    assert autopilot_review("hi", body, _cfg(),
+                            from_email="alex@sender-domain.example") == []
+
+
 def test_the_subject_is_checked_too():
     assert autopilot_review("see evil.example", "fine", _cfg())
 

@@ -2565,24 +2565,25 @@ class StateManager:
 
     # ── Reply Deduplication ──
 
-    async def is_reply_processed(self, reply_id: str) -> bool:
+    async def is_reply_processed(self, reply_id: str, mailbox_id: str | None = None) -> bool:
         """Check if a reply has already been processed."""
         if not reply_id:
             return False
         async with self._connect() as db:
             async with db.execute(
-                "SELECT 1 FROM processed_replies WHERE reply_id = ?", (reply_id,)
+                "SELECT 1 FROM processed_replies WHERE reply_id = ?",
+                (f"{mailbox_id}:{reply_id}" if mailbox_id else reply_id,)
             ) as cursor:
                 return bool(await cursor.fetchone())
 
-    async def mark_reply_processed(self, reply_id: str):
+    async def mark_reply_processed(self, reply_id: str, mailbox_id: str | None = None):
         """Mark a reply as processed to avoid double-handling."""
         if not reply_id:
             return
         async with self._connect() as db:
             await db.execute(
                 "INSERT OR IGNORE INTO processed_replies (reply_id) VALUES (?)",
-                (reply_id,),
+                (f"{mailbox_id}:{reply_id}" if mailbox_id else reply_id,),
             )
             await db.commit()
 
