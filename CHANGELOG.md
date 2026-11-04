@@ -23,6 +23,7 @@ minor versions can still change behaviour.
   sender identities and OAuth token paths; added mailbox-specific SMTP/IMAP
   credentials and mailbox-aware auth/test CLI options.
 - Phase 3 test run on Python 3.14: 2,812 passed, 184 skipped.
+- Added mailbox warmup-cap calculation, per-mailbox window overrides, recipient/mailbox/fixed timezone modes with IANA validation, eligibility checks, and least-used/round-robin/weighted selection primitives.
 
 ### Added
 

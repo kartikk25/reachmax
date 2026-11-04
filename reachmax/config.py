@@ -163,6 +163,8 @@ class SendWindowConfig(BaseModel):
     end: str = "17:00"
     weekdays_only: bool = True     # Monday to Friday, in every country
     recipient_timezone: bool = True
+    timezone_mode: str = "recipient"  # recipient, mailbox, or fixed
+    timezone: str = ""
 
     @field_validator("start", "end", mode="before")
     @classmethod
@@ -188,6 +190,30 @@ class SendWindowConfig(BaseModel):
                 "send_window.start must be earlier than send_window.end "
                 "(a send window can't run past midnight)."
             )
+        return self
+
+    @field_validator("timezone_mode", mode="before")
+    @classmethod
+    def _timezone_mode(cls, value):
+        value = str(value or "recipient").strip().lower()
+        if value not in {"recipient", "mailbox", "fixed"}:
+            raise ValueError("send_window.timezone_mode must be recipient, mailbox, or fixed.")
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value):
+        value = (value or "").strip()
+        if value:
+            import pytz
+            if value not in pytz.all_timezones_set:
+                raise ValueError(f"send_window.timezone '{value}' is not a known IANA time zone.")
+        return value
+
+    @model_validator(mode="after")
+    def _zone_required(self):
+        if self.timezone_mode in {"mailbox", "fixed"} and not self.timezone:
+            raise ValueError(f"send_window.timezone is required when timezone_mode is {self.timezone_mode}.")
         return self
 
 

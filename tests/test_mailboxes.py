@@ -145,3 +145,38 @@ def test_registry_builds_provider_with_mailbox_identity_and_unique_token(monkeyp
     assert provider.from_email == "alex@example.com"
     assert provider.from_name == "Alex Rivera"
     assert provider.token_file == tmp_path / "sales_a.json"
+
+
+def test_registry_caps_warmup_and_selects_lowest_utilization():
+    from datetime import date
+
+    config = load_config("reachmax.yaml")
+    config.channels.email.mailboxes = [
+        MailboxConfig(**mailbox(id="sales_a", warmup={
+            "start_date": "2026-01-01", "min_days": 0,
+            "start_sends": 5, "daily_increase": 2})),
+        MailboxConfig(**mailbox(id="sales_b", weight=10)),
+    ]
+    registry = MailboxRegistry(config)
+    assert registry.effective_cap("sales_a", date(2026, 1, 3)) == 9
+    assert registry.pick(["sales_a", "sales_b"], {"sales_a": 4, "sales_b": 20}) == "sales_a"
+    assert registry.pick(["sales_a", "sales_b"], {"sales_a": 4, "sales_b": 20},
+                         strategy="weighted") == "sales_b"
+
+
+def test_registry_eligibility_enforces_status_cap_gap_and_window():
+    from datetime import datetime, timedelta
+
+    config = load_config("reachmax.yaml")
+    config.channels.email.min_gap_per_mailbox_seconds = 120
+    config.channels.email.mailboxes = [MailboxConfig(**mailbox())]
+    registry = MailboxRegistry(config)
+    # 10:00 UTC is 05:00 in New York during standard time.
+    recipient = type("Recipient", (), {"timezone": "America/New_York"})()
+    now = datetime(2026, 1, 5, 10, 0)
+    assert registry.eligible("sales_a", now, recipient, status="active")
+    assert not registry.eligible("sales_a", now, recipient, status="paused")
+    assert not registry.eligible("sales_a", now, recipient, sent_today=40)
+    assert not registry.eligible("sales_a", now, recipient,
+                                 last_sent_at=now - timedelta(seconds=119))
+    assert not registry.eligible("sales_a", now - timedelta(minutes=1), recipient)

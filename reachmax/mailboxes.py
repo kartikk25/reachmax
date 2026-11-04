@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
-from reachmax.config import MailboxConfig, ReachMaxConfig, load_mailbox_env
+import pytz
+
+from reachmax.config import (MailboxConfig, ReachMaxConfig, SendWindowConfig,
+                             WarmupConfig, load_mailbox_env, operator_timezone)
 from reachmax.paths import TOKEN_DIR
 
 
@@ -83,4 +87,87 @@ class MailboxRegistry:
         return get_mail_provider(
             self.config, env, mailbox=mailbox,
             token_file=mailbox_token_path(mailbox.id))
+
+    def effective_cap(self, mailbox_id: str, today: date | None = None) -> int:
+        mailbox = self.get(mailbox_id)
+        if mailbox is None:
+            return 0
+        return mailbox.warmup.daily_cap(mailbox.max_daily_sends, today)
+
+    def window(self, mailbox_id: str) -> SendWindowConfig | None:
+        mailbox = self.get(mailbox_id)
+        return (mailbox.send_window if mailbox and mailbox.send_window is not None
+                else self.config.channels.email.send_window)
+
+    def timezone_for(self, mailbox_id: str, recipient=None) -> str:
+        window = self.window(mailbox_id)
+        mailbox = self.get(mailbox_id)
+        if window is None:
+            return operator_timezone(self.config)
+        mode = getattr(window, "timezone_mode", "recipient")
+        if mode == "fixed":
+            return window.timezone
+        if mode == "mailbox":
+            return window.timezone or getattr(mailbox, "timezone", "") or operator_timezone(self.config)
+        return (getattr(recipient, "timezone", "") or operator_timezone(self.config))
+
+    def eligible(self, mailbox_id: str, now: datetime, recipient=None, *,
+                 status: str = "active", sent_today: int = 0,
+                 last_sent_at: datetime | None = None,
+                 cooldown_until: datetime | None = None) -> bool:
+        """Apply state, mailbox cap, per-mailbox gap, cooldown, and local window."""
+        mailbox = self.get(mailbox_id)
+        if mailbox is None or not mailbox.enabled or status not in {"active", "warming"}:
+            return False
+        if now.tzinfo is None:
+            now_utc = pytz.utc.localize(now)
+        else:
+            now_utc = now.astimezone(pytz.utc)
+        operator_tz = pytz.timezone(operator_timezone(self.config))
+        today = now_utc.astimezone(operator_tz).date()
+        cap = self.effective_cap(mailbox_id, today)
+        if cap <= 0 or sent_today >= cap:
+            return False
+        if cooldown_until is not None and now < cooldown_until:
+            return False
+        gap = self.config.channels.email.min_gap_per_mailbox_seconds
+        if last_sent_at is not None and now - last_sent_at < timedelta(seconds=gap):
+            return False
+        window = self.window(mailbox_id)
+        if window is None:
+            return True
+        zone = self.timezone_for(mailbox_id, recipient)
+        return in_window_utc(now, zone, window)
+
+    def pick(self, candidates: list[str], sent_today: dict[str, int] | None = None,
+             last_sent_at: dict[str, datetime | None] | None = None,
+             strategy: str | None = None) -> str | None:
+        """Choose among already-eligible ids using the configured strategy."""
+        sent_today = sent_today or {}
+        last_sent_at = last_sent_at or {}
+        if not candidates:
+            return None
+        strategy = strategy or self.config.channels.email.mailbox_strategy
+        if strategy == "round_robin":
+            ordered = sorted(candidates)
+            previous = getattr(self, "_last_picked", "")
+            picked = next((mid for mid in ordered if mid > previous), ordered[0])
+            self._last_picked = picked
+            return picked
+        def score(mid):
+            cap = max(1, self.effective_cap(mid))
+            used = sent_today.get(mid, 0) / cap
+            if strategy == "weighted":
+                used /= max(1, self.get(mid).weight)
+            last = last_sent_at.get(mid)
+            return used, last or datetime.min, mid
+        return min(candidates, key=score)
+
+
+def in_window_utc(now: datetime, zone: str, window: SendWindowConfig) -> bool:
+    """Use the established DST-aware send-window implementation."""
+    from reachmax.send_window import in_window
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+    return in_window(now, zone or "UTC", window)
 
