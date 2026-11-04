@@ -454,22 +454,49 @@ def cmd_export(args):
     asyncio.run(_export())
 
 
+def _provider_mailbox(args, provider_name: str):
+    from reachmax.config import load_config, load_mailbox_env
+    from reachmax.mailboxes import configured_mailboxes, mailbox_token_path
+
+    config = load_config()
+    configured = config.channels.email.mailboxes
+    mailbox_id = getattr(args, "mailbox", None)
+    if configured:
+        if not mailbox_id:
+            print(f"  Select a sender with --mailbox <id> for this Reach Max mailbox pool.")
+            raise SystemExit(2)
+        mailbox = next((m for m in configured if m.id == mailbox_id), None)
+        if mailbox is None:
+            print(f"  Unknown mailbox '{mailbox_id}'. Check channels.email.mailboxes in reachmax.yaml.")
+            raise SystemExit(2)
+        if mailbox.provider != provider_name:
+            print(f"  Mailbox '{mailbox.id}' uses {mailbox.provider}, not {provider_name}.")
+            raise SystemExit(2)
+        legacy = False
+    else:
+        if mailbox_id not in (None, "default"):
+            print(f"  Unknown mailbox '{mailbox_id}'. The legacy sender id is 'default'.")
+            raise SystemExit(2)
+        mailbox = configured_mailboxes(config)[0].model_copy(update={"provider": provider_name})
+        legacy = True
+    env = load_mailbox_env(mailbox.id, provider_name, legacy=legacy)
+    return config, mailbox, env, mailbox_token_path(mailbox.id)
+
+
 def cmd_gmail(args):
     """Gmail provider utilities (auth / test)."""
-    from reachmax.config import load_env
-
-    env = load_env()
+    config, mailbox, env, token_file = _provider_mailbox(args, "gmail")
     if args.gmail_action == "auth":
         from reachmax.integrations.gmail import run_auth_flow
-        ok = run_auth_flow(env.gmail_client_id, env.gmail_client_secret)
+        ok = run_auth_flow(env.gmail_client_id, env.gmail_client_secret,
+                           token_file=token_file, mailbox_id=mailbox.id)
         sys.exit(0 if ok else 1)
 
     if args.gmail_action == "test":
-        from reachmax.config import load_config
         from reachmax.integrations.gmail import GmailProvider
 
         async def _test():
-            provider = GmailProvider(load_config(), env)
+            provider = GmailProvider(config, env, mailbox=mailbox, token_file=token_file)
             ok, detail = await provider.test_connection()
             print(f"\n  {'✓' if ok else '✗'} {detail}\n")
             sys.exit(0 if ok else 1)
@@ -478,20 +505,19 @@ def cmd_gmail(args):
 
 def cmd_microsoft(args):
     """Microsoft 365 provider utilities (auth / test)."""
-    from reachmax.config import load_env
-
-    env = load_env()
+    config, mailbox, env, token_file = _provider_mailbox(args, "microsoft")
     if args.microsoft_action == "auth":
         from reachmax.integrations.microsoft import run_auth_flow
-        ok = run_auth_flow(env.m365_client_id, env.m365_tenant_id)
+        ok = run_auth_flow(env.m365_client_id, env.m365_tenant_id,
+                           token_file=token_file, mailbox_id=mailbox.id)
         sys.exit(0 if ok else 1)
 
     if args.microsoft_action == "test":
-        from reachmax.config import load_config
         from reachmax.integrations.microsoft import MicrosoftProvider
 
         async def _test():
-            provider = MicrosoftProvider(load_config(), env)
+            provider = MicrosoftProvider(config, env, mailbox=mailbox,
+                                         token_file=token_file)
             ok, detail = await provider.test_connection()
             print(f"\n  {'✓' if ok else '✗'} {detail}\n")
             sys.exit(0 if ok else 1)
@@ -1059,12 +1085,14 @@ def main():
     sub = subparsers.add_parser("gmail", help="Gmail provider setup")
     sub.add_argument("gmail_action", choices=["auth", "test"],
                      help="auth: one-time OAuth; test: verify connection")
+    sub.add_argument("--mailbox", default=None, help="Mailbox id from channels.email.mailboxes")
     sub.set_defaults(func=cmd_gmail)
 
     # reachmax microsoft auth|test
     sub = subparsers.add_parser("microsoft", help="Microsoft 365 provider setup")
     sub.add_argument("microsoft_action", choices=["auth", "test"],
                      help="auth: one-time sign-in; test: verify connection")
+    sub.add_argument("--mailbox", default=None, help="Mailbox id from channels.email.mailboxes")
     sub.set_defaults(func=cmd_microsoft)
 
     # reachmax outbox

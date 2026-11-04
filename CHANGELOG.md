@@ -19,6 +19,10 @@ minor versions can still change behaviour.
   an additive/idempotent SQLite mailbox migration, runtime mailbox events,
   YAML-to-database sync, and initial multi-mailbox configuration docs.
 - Phase 2 test run on Python 3.14: 2,809 passed, 184 skipped.
+- Refactored native Gmail, Microsoft, and SMTP providers to use mailbox-specific
+  sender identities and OAuth token paths; added mailbox-specific SMTP/IMAP
+  credentials and mailbox-aware auth/test CLI options.
+- Phase 3 test run on Python 3.14: 2,812 passed, 184 skipped.
 
 ### Added
 

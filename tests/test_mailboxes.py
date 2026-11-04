@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from reachmax.config import EmailChannelConfig, MailboxConfig, load_config
-from reachmax.mailboxes import MailboxRegistry, configured_mailboxes
+from reachmax.mailboxes import MailboxRegistry, configured_mailboxes, mailbox_token_path
 from reachmax.state import MIGRATIONS, StateManager
 
 
@@ -106,3 +106,42 @@ async def test_registry_sync_updates_config_and_disables_removed_rows(tmp_path):
     async with aiosqlite.connect(state.db_path) as db:
         async with db.execute("SELECT kind, detail FROM mailbox_events WHERE mailbox_id='sales_a'") as cursor:
             assert await cursor.fetchone() == ("sent", "test history")
+
+
+def test_mailbox_token_paths_are_distinct_and_reject_path_traversal(monkeypatch, tmp_path):
+    monkeypatch.setattr("reachmax.mailboxes.TOKEN_DIR", tmp_path)
+    assert mailbox_token_path("sales_a") == tmp_path / "sales_a.json"
+    assert mailbox_token_path("sales_b") == tmp_path / "sales_b.json"
+    with pytest.raises(ValueError, match="short slug"):
+        mailbox_token_path("../outside")
+
+
+def test_explicit_mailbox_credentials_do_not_reuse_legacy_smtp(monkeypatch):
+    from reachmax.config import load_mailbox_env
+
+    monkeypatch.setenv("REACHMAX_SMTP_HOST", "legacy.example")
+    monkeypatch.setenv("REACHMAX_SMTP_USERNAME", "legacy@example.com")
+    monkeypatch.setenv("REACHMAX_SMTP_PASSWORD", "legacy-secret")
+    monkeypatch.setenv("REACHMAX_MAILBOX_SALES_A_SMTP_HOST", "sales.example")
+    monkeypatch.setenv("REACHMAX_MAILBOX_SALES_A_SMTP_USERNAME", "alex@example.com")
+    monkeypatch.setenv("REACHMAX_MAILBOX_SALES_A_SMTP_PASSWORD", "sales-secret")
+
+    env = load_mailbox_env("sales_a", "smtp")
+    assert (env.smtp_host, env.smtp_username, env.smtp_password) == (
+        "sales.example", "alex@example.com", "sales-secret")
+
+
+def test_registry_builds_provider_with_mailbox_identity_and_unique_token(monkeypatch, tmp_path):
+    from reachmax.mailboxes import MailboxRegistry
+
+    config = load_config("reachmax.yaml")
+    config.channels.email.mailboxes = [MailboxConfig(**mailbox())]
+    monkeypatch.setattr("reachmax.mailboxes.TOKEN_DIR", tmp_path)
+    monkeypatch.setattr("reachmax.mailboxes.load_mailbox_env", lambda *a, **k: object())
+    registry = MailboxRegistry(config)
+
+    provider = registry.provider("sales_a")
+    assert provider.mailbox_id == "sales_a"
+    assert provider.from_email == "alex@example.com"
+    assert provider.from_name == "Alex Rivera"
+    assert provider.token_file == tmp_path / "sales_a.json"

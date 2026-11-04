@@ -22,10 +22,11 @@ import time
 import webbrowser
 from email.message import EmailMessage, Message
 from email.utils import parseaddr
+from pathlib import Path
 
 import httpx
 
-from reachmax.paths import PROJECT_ROOT
+from reachmax.mailboxes import mailbox_token_path
 from reachmax.integrations.mail_provider import (
     InboundMessage,
     MailProvider,
@@ -36,7 +37,7 @@ from reachmax.integrations.signature import SignatureError, load_signature, set_
 
 logger = logging.getLogger("reachmax.gmail")
 
-TOKEN_FILE = PROJECT_ROOT / "data" / "gmail_token.json"
+TOKEN_FILE = mailbox_token_path("default")
 API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -68,10 +69,10 @@ def _entry_id(entry, page: int) -> str:
 TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
 
 
-def _load_token() -> dict | None:
+def _read_token_file(token_file: Path) -> dict | None:
     try:
-        if TOKEN_FILE.is_file():
-            data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
+        if token_file.is_file():
+            data = json.loads(token_file.read_text(encoding="utf-8"))
             if isinstance(data, dict) and data.get("refresh_token"):
                 return data
     except (OSError, json.JSONDecodeError) as e:
@@ -79,20 +80,38 @@ def _load_token() -> dict | None:
     return None
 
 
-def _save_token(data: dict):
-    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def _load_token() -> dict | None:
+    return _read_token_file(Path(TOKEN_FILE))
+
+
+def _save_token_file(data: dict, token_file: Path):
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
     try:
-        TOKEN_FILE.chmod(0o600)
+        token_file.chmod(0o600)
     except OSError:
         pass
+
+
+def _save_token(data: dict):
+    _save_token_file(data, Path(TOKEN_FILE))
 
 
 class GmailProvider(MailProvider):
     name = "gmail"
 
-    def __init__(self, config, env):
+    def __init__(self, config, env, *, mailbox=None, token_file=None):
         self.config = config
+        self.mailbox = mailbox
+        self.mailbox_id = getattr(mailbox, "id", "default")
+        self.token_file = Path(token_file or (
+            TOKEN_FILE if mailbox is None else mailbox_token_path(self.mailbox_id)))
+        self.from_name = (getattr(mailbox, "from_name", "") or
+                          getattr(getattr(config, "persona", None), "name", ""))
+        self.from_email = (getattr(mailbox, "address", "") or
+                           getattr(getattr(config, "persona", None), "email", ""))
+        self.auth_command = "reachmax gmail auth" + (
+            f" --mailbox {self.mailbox_id}" if mailbox is not None else "")
         self.client_id = getattr(env, "gmail_client_id", "")
         self.client_secret = getattr(env, "gmail_client_secret", "")
         self._access_token = ""
@@ -110,17 +129,45 @@ class GmailProvider(MailProvider):
         self._last_full_read = 0.0
         self._verify_week = False      # list the week once more after a full read
         self._pending: tuple | None = None
+        self._identity_verified = False
+
+    def _load_saved_token(self) -> dict | None:
+        # Preserve the testable single-mailbox seam; every named mailbox reads
+        # only its own file under data/tokens/.
+        return (_load_token() if self.token_file == Path(TOKEN_FILE)
+                else _read_token_file(self.token_file))
+
+    def _save_saved_token(self, data: dict) -> None:
+        if self.token_file == Path(TOKEN_FILE):
+            _save_token(data)
+        else:
+            _save_token_file(data, self.token_file)
+
+    async def _verify_sender_identity(self) -> tuple[bool, str]:
+        if self.mailbox is None or self._identity_verified:
+            return True, ""
+        profile = await self._request("GET", "/profile")
+        actual = (profile.get("emailAddress", "").strip().lower()
+                  if isinstance(profile, dict) else "")
+        expected = (self.from_email or "").strip().lower()
+        if not actual:
+            return False, "Gmail account identity could not be verified. No email was sent."
+        if actual != expected:
+            return False, (f"Gmail is signed in as {actual}, but mailbox "
+                           f"{self.mailbox_id} is configured as {expected}. No email was sent.")
+        self._identity_verified = True
+        return True, ""
 
     def is_configured(self) -> bool:
-        return bool(self.client_id and self.client_secret and _load_token())
+        return bool(self.client_id and self.client_secret and self._load_saved_token())
 
     async def _token(self) -> str | None:
         """Valid access token, refreshing via the stored refresh token."""
         if self._access_token and time.time() < self._access_expires - 60:
             return self._access_token
-        stored = _load_token()
+        stored = self._load_saved_token()
         if not stored:
-            self._token_problem = "not signed in to Gmail. Run 'reachmax gmail auth'."
+            self._token_problem = f"not signed in to Gmail. Run '{self.auth_command}'."
             logger.error("Gmail: " + self._token_problem)
             return None
         # Why there's no token, for whoever asked (get_replies says it).
@@ -140,9 +187,9 @@ class GmailProvider(MailProvider):
             return None
         if resp.status_code in (400, 401, 403):
             self._token_problem = (f"Google rejected the saved Gmail sign-in ({resp.status_code}). "
-                                   "Run 'reachmax gmail auth'.")
+                                   f"Run '{self.auth_command}'.")
             logger.error(f"Gmail token refresh rejected ({resp.status_code}). "
-                         "Re-run 'reachmax gmail auth'.")
+                         f"Re-run '{self.auth_command}'.")
             return None
         if resp.status_code != 200:
             self._token_problem = unreachable.format(f" (HTTP {resp.status_code})")
@@ -219,10 +266,13 @@ class GmailProvider(MailProvider):
             sig = load_signature(self.config)
         except SignatureError as e:
             return SendResult(ok=False, error=f"signature: {e}"[:300])
+        identity_ok, identity_error = await self._verify_sender_identity()
+        if not identity_ok:
+            return SendResult(ok=False, error=identity_error[:300])
         msg = EmailMessage()
-        persona = self.config.persona
         msg["To"] = to_email
-        msg["From"] = f"{persona.name} <{persona.email}>" if persona.email else persona.name
+        msg["From"] = (f"{self.from_name} <{self.from_email}>"
+                       if self.from_email else self.from_name)
         msg["Subject"] = subject
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
@@ -278,7 +328,7 @@ class GmailProvider(MailProvider):
         """
         if not await self._token():
             raise GmailError(self._token_problem
-                             or "not signed in to Gmail. Run 'reachmax gmail auth'.")
+                             or f"not signed in to Gmail. Run '{self.auth_command}'.")
         self._pending = None
         recent_full = (self._last_full_read
                        and time.time() - self._last_full_read < FULL_READ_EVERY_SECONDS)
@@ -540,15 +590,22 @@ class GmailProvider(MailProvider):
     async def test_connection(self) -> tuple[bool, str]:
         if not self.client_id or not self.client_secret:
             return False, "REACHMAX_GMAIL_CLIENT_ID / REACHMAX_GMAIL_CLIENT_SECRET missing from .env"
-        if not _load_token():
-            return False, "Not authorized yet — run 'reachmax gmail auth'"
+        if not self._load_saved_token():
+            return False, f"Not authorized yet — run '{self.auth_command}'"
         data = await self._request("GET", "/profile")
         if data and data.get("emailAddress"):
+            actual = str(data["emailAddress"]).strip().lower()
+            expected = (self.from_email or "").strip().lower()
+            if self.mailbox is not None and actual != expected:
+                return False, (f"Gmail is signed in as {actual}, but mailbox "
+                               f"{self.mailbox_id} is configured as {expected}.")
+            self._identity_verified = True
             return True, f"Connected as {data['emailAddress']}"
         return False, "Token refresh or profile fetch failed"
 
 
-def run_auth_flow(client_id: str, client_secret: str) -> bool:
+def run_auth_flow(client_id: str, client_secret: str, *, token_file=None,
+                  mailbox_id: str = "default") -> bool:
     """One-time OAuth (installed-app loopback). Blocks until the browser
     round-trip completes; stores the refresh token for GmailProvider."""
     import http.server
@@ -625,10 +682,11 @@ def run_auth_flow(client_id: str, client_secret: str) -> bool:
         print("  Google returned no refresh token. Remove Reach Max from your"
               " account's third-party access list and retry.")
         return False
-    _save_token({
+    target_token_file = Path(token_file or TOKEN_FILE)
+    _save_token_file({
         "refresh_token": data["refresh_token"],
         "scope": data.get("scope", SCOPE),
         "obtained_at": int(time.time()),
-    })
-    print(f"  ✓ Gmail authorized. Token stored at {TOKEN_FILE}")
+    }, target_token_file)
+    print(f"  ✓ Gmail authorized for {mailbox_id}. Token stored at {target_token_file}")
     return True

@@ -32,10 +32,11 @@ import socket
 import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 
-from reachmax.paths import PROJECT_ROOT
+from reachmax.mailboxes import mailbox_token_path
 from reachmax.integrations.mail_provider import (
     InboundMessage,
     MailProvider,
@@ -46,7 +47,7 @@ from reachmax.integrations.signature import SignatureError, load_signature, rend
 
 logger = logging.getLogger("reachmax.microsoft")
 
-TOKEN_FILE = PROJECT_ROOT / "data" / "m365_token.json"
+TOKEN_FILE = mailbox_token_path("default")
 GRAPH = "https://graph.microsoft.com/v1.0"
 GRAPH_HOST = "graph.microsoft.com"
 INBOX_MESSAGES = "/me/mailFolders/inbox/messages"
@@ -82,10 +83,10 @@ class GraphError(RuntimeError):
     pass
 
 
-def _load_token() -> dict | None:
+def _read_token_file(token_file: Path) -> dict | None:
     try:
-        if TOKEN_FILE.is_file():
-            data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
+        if token_file.is_file():
+            data = json.loads(token_file.read_text(encoding="utf-8"))
             if isinstance(data, dict) and data.get("refresh_token"):
                 return data
     except (OSError, json.JSONDecodeError) as e:
@@ -93,13 +94,21 @@ def _load_token() -> dict | None:
     return None
 
 
-def _save_token(data: dict):
-    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def _load_token() -> dict | None:
+    return _read_token_file(Path(TOKEN_FILE))
+
+
+def _save_token_file(data: dict, token_file: Path):
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
     try:
-        TOKEN_FILE.chmod(0o600)
+        token_file.chmod(0o600)
     except OSError:
         pass
+
+
+def _save_token(data: dict):
+    _save_token_file(data, Path(TOKEN_FILE))
 
 
 def _token_url(tenant: str) -> str:
@@ -109,8 +118,18 @@ def _token_url(tenant: str) -> str:
 class MicrosoftProvider(MailProvider):
     name = "microsoft"
 
-    def __init__(self, config, env, transport=None):
+    def __init__(self, config, env, transport=None, *, mailbox=None, token_file=None):
         self.config = config
+        self.mailbox = mailbox
+        self.mailbox_id = getattr(mailbox, "id", "default")
+        self.token_file = Path(token_file or (
+            TOKEN_FILE if mailbox is None else mailbox_token_path(self.mailbox_id)))
+        self.from_name = (getattr(mailbox, "from_name", "") or
+                          getattr(getattr(config, "persona", None), "name", ""))
+        self.from_email = (getattr(mailbox, "address", "") or
+                           getattr(getattr(config, "persona", None), "email", ""))
+        self.auth_command = "reachmax microsoft auth" + (
+            f" --mailbox {self.mailbox_id}" if mailbox is not None else "")
         self.client_id = getattr(env, "m365_client_id", "")
         self.tenant = getattr(env, "m365_tenant_id", "") or "organizations"
         self._transport = transport  # httpx.MockTransport in tests
@@ -118,8 +137,18 @@ class MicrosoftProvider(MailProvider):
         self._access_expires = 0.0
         self._me = ""
 
+    def _load_saved_token(self) -> dict | None:
+        return (_load_token() if self.token_file == Path(TOKEN_FILE)
+                else _read_token_file(self.token_file))
+
+    def _save_saved_token(self, data: dict) -> None:
+        if self.token_file == Path(TOKEN_FILE):
+            _save_token(data)
+        else:
+            _save_token_file(data, self.token_file)
+
     def is_configured(self) -> bool:
-        return bool(self.client_id and _load_token())
+        return bool(self.client_id and self._load_saved_token())
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport)
@@ -129,9 +158,9 @@ class MicrosoftProvider(MailProvider):
         use, so the new one is saved each time."""
         if self._access_token and time.time() < self._access_expires - 60:
             return self._access_token
-        stored = _load_token()
+        stored = self._load_saved_token()
         if not stored:
-            raise GraphError("not authorized. Run 'reachmax microsoft auth'.")
+            raise GraphError(f"not authorized. Run '{self.auth_command}'.")
         try:
             async with self._client() as client:
                 resp = await client.post(_token_url(self.tenant), data={
@@ -145,12 +174,12 @@ class MicrosoftProvider(MailProvider):
         if resp.status_code != 200:
             raise GraphError(
                 f"token refresh rejected ({resp.status_code}): {resp.text[:200]}. "
-                "Re-run 'reachmax microsoft auth'."
+                f"Re-run '{self.auth_command}'."
             )
         data = resp.json()
         if data.get("refresh_token"):
-            _save_token({**stored, "refresh_token": data["refresh_token"],
-                         "refreshed_at": int(time.time())})
+            self._save_saved_token({**stored, "refresh_token": data["refresh_token"],
+                                    "refreshed_at": int(time.time())})
         self._access_token = data.get("access_token", "")
         self._access_expires = time.time() + float(data.get("expires_in", 3600))
         if not self._access_token:
@@ -209,15 +238,17 @@ class MicrosoftProvider(MailProvider):
         return self._me
 
     async def _check_identity(self) -> str:
-        """The signed-in mailbox must be persona.email: a token for the wrong
+        """The signed-in mailbox must match the configured sender address: a token for the wrong
         account (say, the admin who approved the app) would otherwise send
         cold email from that account."""
         me = await self._my_address()
-        expected = (getattr(getattr(self.config, "persona", None), "email", "") or "").strip().lower()
+        expected = (self.from_email or "").strip().lower()
         if expected and me != expected:
+            configured_as = ("persona.email" if self.mailbox is None
+                             else f"mailbox '{self.mailbox_id}' address")
             raise GraphError(
-                f"signed in as {me}, but persona.email is {expected}. Run "
-                f"'reachmax microsoft auth' again and sign in as {expected}."
+                f"signed in as {me}, but {configured_as} is {expected}. Run "
+                f"'{self.auth_command}' again and sign in as {expected}."
             )
         return me
 
@@ -382,8 +413,8 @@ class MicrosoftProvider(MailProvider):
     async def test_connection(self) -> tuple[bool, str]:
         if not self.client_id:
             return False, "REACHMAX_M365_CLIENT_ID missing from .env"
-        if not _load_token():
-            return False, "Not authorized yet — run 'reachmax microsoft auth'"
+        if not self._load_saved_token():
+            return False, f"Not authorized yet — run '{self.auth_command}'"
         try:
             me = await self._check_identity()
             await self._request(
@@ -438,7 +469,8 @@ class _LoopbackServerV6(_LoopbackServer):
     address_family = socket.AF_INET6
 
 
-def run_auth_flow(client_id: str, tenant: str = "") -> bool:
+def run_auth_flow(client_id: str, tenant: str = "", *, token_file=None,
+                  mailbox_id: str = "default") -> bool:
     """One-time sign-in (authorization code + PKCE, loopback redirect).
     Blocks until the browser round-trip completes."""
     import threading
@@ -526,11 +558,12 @@ def run_auth_flow(client_id: str, tenant: str = "") -> bool:
     if not data.get("refresh_token"):
         print("  Microsoft returned no refresh token (offline_access missing?).")
         return False
-    _save_token({
+    target_token_file = Path(token_file or TOKEN_FILE)
+    _save_token_file({
         "refresh_token": data["refresh_token"],
         "tenant": tenant,
         "scope": data.get("scope", SCOPE),
         "obtained_at": int(time.time()),
-    })
-    print(f"  ✓ Microsoft 365 authorized. Token stored at {TOKEN_FILE}")
+    }, target_token_file)
+    print(f"  ✓ Microsoft 365 authorized for {mailbox_id}. Token stored at {target_token_file}")
     return True

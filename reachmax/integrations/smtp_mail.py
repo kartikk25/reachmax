@@ -37,8 +37,14 @@ logger = logging.getLogger("reachmax.smtp")
 class SmtpImapProvider(MailProvider):
     name = "smtp"
 
-    def __init__(self, config, env):
+    def __init__(self, config, env, *, mailbox=None):
         self.config = config
+        self.mailbox = mailbox
+        self.mailbox_id = getattr(mailbox, "id", "default")
+        self.from_name = (getattr(mailbox, "from_name", "") or
+                          getattr(getattr(config, "persona", None), "name", ""))
+        self.from_email = (getattr(mailbox, "address", "") or
+                           getattr(getattr(config, "persona", None), "email", ""))
         self.smtp_host = getattr(env, "smtp_host", "")
         self.smtp_port = int(getattr(env, "smtp_port", 587) or 587)
         self.smtp_user = getattr(env, "smtp_username", "")
@@ -63,12 +69,12 @@ class SmtpImapProvider(MailProvider):
             sig = load_signature(self.config)
         except SignatureError as e:
             return SendResult(ok=False, error=f"signature: {e}"[:300])
-        persona = self.config.persona
         msg = EmailMessage()
         msg["To"] = to_email
-        msg["From"] = f"{persona.name} <{persona.email or self.smtp_user}>"
+        sender_address = self.from_email or self.smtp_user
+        msg["From"] = f"{self.from_name} <{sender_address}>" if self.from_name else sender_address
         msg["Subject"] = subject
-        message_id = make_msgid(domain=(persona.email or self.smtp_user).split("@")[-1])
+        message_id = make_msgid(domain=sender_address.split("@")[-1])
         msg["Message-ID"] = message_id
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to

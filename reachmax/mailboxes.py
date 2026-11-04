@@ -8,9 +8,20 @@ and persisted mailbox state synchronized first.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
 
-from reachmax.config import MailboxConfig, ReachMaxConfig
+from reachmax.config import MailboxConfig, ReachMaxConfig, load_mailbox_env
+from reachmax.paths import TOKEN_DIR
+
+
+def mailbox_token_path(mailbox_id: str) -> Path:
+    """Private OAuth token path for one account; ids cannot escape data/tokens."""
+    mailbox_id = str(mailbox_id or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", mailbox_id):
+        raise ValueError("mailbox id must be a short slug")
+    return TOKEN_DIR / f"{mailbox_id}.json"
 
 
 def configured_mailboxes(config: ReachMaxConfig) -> list[MailboxConfig]:
@@ -45,6 +56,9 @@ class MailboxRegistry:
     """Config-backed mailbox inventory; database state remains authoritative."""
 
     config: ReachMaxConfig
+    env: object | None = None
+    mailboxes: list[MailboxConfig] = field(init=False)
+    by_id: dict[str, MailboxConfig] = field(init=False)
 
     def __post_init__(self) -> None:
         self.mailboxes = configured_mailboxes(self.config)
@@ -56,4 +70,17 @@ class MailboxRegistry:
 
     def get(self, mailbox_id: str) -> MailboxConfig | None:
         return self.by_id.get(mailbox_id)
+
+    def provider(self, mailbox_id: str):
+        """Create an isolated native provider client for one configured id."""
+        mailbox = self.get(mailbox_id)
+        if mailbox is None or not mailbox.enabled:
+            return None
+        from reachmax.integrations.mail_provider import get_mail_provider
+        legacy = not bool(self.config.channels.email.mailboxes)
+        env = (self.env if legacy and self.env is not None else
+               load_mailbox_env(mailbox.id, mailbox.provider, legacy=legacy))
+        return get_mail_provider(
+            self.config, env, mailbox=mailbox,
+            token_file=mailbox_token_path(mailbox.id))
 

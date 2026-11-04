@@ -147,16 +147,17 @@ class MailProvider(ABC):
         """Cheap end-to-end credential check. Returns (ok, detail)."""
 
 
-def get_mail_provider(config, env) -> MailProvider | None:
-    """Build the configured native provider, or None for instantly/unknown."""
-    provider = (config.channels.email.provider or "").strip().lower()
+def get_mail_provider(config, env, *, mailbox=None, token_file=None) -> MailProvider | None:
+    """Build a native provider, parameterized for one mailbox when supplied."""
+    provider = (getattr(mailbox, "provider", "") or
+                config.channels.email.provider or "").strip().lower()
     if provider == "gmail":
         from reachmax.integrations.gmail import GmailProvider
-        return GmailProvider(config, env)
+        return GmailProvider(config, env, mailbox=mailbox, token_file=token_file)
     if provider == "smtp":
         from reachmax.integrations.smtp_mail import SmtpImapProvider
-        return SmtpImapProvider(config, env)
+        return SmtpImapProvider(config, env, mailbox=mailbox)
     if provider == "microsoft":
         from reachmax.integrations.microsoft import MicrosoftProvider
-        return MicrosoftProvider(config, env)
+        return MicrosoftProvider(config, env, mailbox=mailbox, token_file=token_file)
     return None

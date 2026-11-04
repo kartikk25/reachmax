@@ -995,6 +995,48 @@ def load_env() -> EnvConfig:
     return env
 
 
+def load_mailbox_env(mailbox_id: str, provider: str,
+                     *, legacy: bool = False) -> EnvConfig:
+    """Load provider credentials for one mailbox without sharing SMTP auth.
+
+    OAuth application ids can be shared across accounts, while each account's
+    refresh token is isolated in its own token file. SMTP/IMAP credentials in
+    a multi-mailbox pool must be named for that mailbox and never fall back to
+    the legacy single-sender credentials.
+    """
+    base = load_env()
+    if legacy:
+        return base
+    prefix = "REACHMAX_MAILBOX_" + re.sub(r"[^A-Za-z0-9]", "_", mailbox_id).upper() + "_"
+
+    def value(name: str, fallback: str = "") -> str:
+        return os.getenv(prefix + name, fallback).strip()
+
+    updates = {}
+    if provider == "smtp":
+        updates.update(
+            smtp_host=value("SMTP_HOST"),
+            smtp_port=int(value("SMTP_PORT", "587") or 587),
+            smtp_username=value("SMTP_USERNAME"),
+            smtp_password=value("SMTP_PASSWORD"),
+            imap_host=value("IMAP_HOST"),
+            imap_port=int(value("IMAP_PORT", "993") or 993),
+            imap_username=value("IMAP_USERNAME"),
+            imap_password=value("IMAP_PASSWORD"),
+        )
+    elif provider == "gmail":
+        updates.update(
+            gmail_client_id=value("GMAIL_CLIENT_ID", base.gmail_client_id),
+            gmail_client_secret=value("GMAIL_CLIENT_SECRET", base.gmail_client_secret),
+        )
+    elif provider == "microsoft":
+        updates.update(
+            m365_client_id=value("M365_CLIENT_ID", base.m365_client_id),
+            m365_tenant_id=value("M365_TENANT_ID", base.m365_tenant_id),
+        )
+    return base.model_copy(update=updates)
+
+
 # ── Approval or autopilot ─────────────────────────────────────────────────
 #
 # channels.email.require_approval: true (the default) means every email
