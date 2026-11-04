@@ -106,6 +106,7 @@ def test_mailbox_api_is_secret_free_and_can_pause_one_mailbox(authed, monkeypatc
         await state.sync_mailboxes([MailboxConfig(
             id="sales_a", label="Sales A", provider="gmail",
             address="alex@example.test", from_name="Alex Rivera")])
+        await state.set_mailbox_error("sales_a", "provider error exposed fake-secret-token")
     import asyncio
     asyncio.run(prepare())
 
@@ -115,8 +116,19 @@ def test_mailbox_api_is_secret_free_and_can_pause_one_mailbox(authed, monkeypatc
     assert payload["mailboxes"][0]["id"] == "sales_a"
     encoded = json.dumps(payload).lower()
     assert "password" not in encoded and "secret" not in encoded and "token" not in encoded
+    assert "fake-secret-token" not in encoded
     assert authed.post("/api/mailboxes/sales_a/pause").json()["status"] == "paused"
     assert authed.post("/api/mailboxes/sales_a/resume").json()["status"] == "active"
+
+    class FakeProvider:
+        async def test_connection(self):
+            return True, "Connected; fake-secret-token"
+
+    monkeypatch.setattr("reachmax.mailboxes.MailboxRegistry.provider",
+                        lambda *_args, **_kwargs: FakeProvider())
+    tested = authed.post("/api/mailboxes/sales_a/test")
+    assert tested.status_code == 200 and tested.json()["success"]
+    assert "fake-secret-token" not in tested.text
 
 
 # ── Every API route needs the token ──

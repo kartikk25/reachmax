@@ -460,6 +460,7 @@ async function loadMailboxes() {
         '<td>' + escHtml(m.status) + '</td><td>' + m.sent_today + '</td><td>' + m.effective_daily_cap + ' / ' + m.max_daily_sends + '</td>' +
         '<td>' + (m.send_window ? escHtml(m.send_window.start + '–' + m.send_window.end + ' · ' + m.send_window.timezone_mode) : 'Open') + '</td>' +
         '<td>' + escHtml(m.last_sent_at || '—') + '</td><td>' +
+        '<button class="btn btn-secondary btn-sm" onclick="mailboxTest(' + jsq(m.id) + ')">Test</button> ' +
         (m.status === 'paused' || m.status === 'error' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'resume\')">Resume</button>' :
           m.status === 'active' || m.status === 'warming' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'pause\')">Pause</button>' : '') + '</td></tr>').join('') +
       '</tbody></table></div>';
@@ -474,6 +475,12 @@ async function mailboxAction(id, action) {
   const result = await api('/api/mailboxes/' + encodeURIComponent(id) + '/' + action, {method: 'POST'});
   if (result && result.success) { showToast('Mailbox ' + action + 'd.'); loadMailboxes(); }
   else showToast(failMsg(result, 'Mailbox action failed.'), 'error');
+}
+
+async function mailboxTest(id) {
+  const result = await api('/api/mailboxes/' + encodeURIComponent(id) + '/test', {method: 'POST'});
+  if (result && result.success) showToast(result.detail || 'Connection check passed.');
+  else showToast(result && result.detail ? result.detail : 'Connection check failed.', 'error');
 }
 
 try { selectedMailbox = localStorage.getItem('reachmax-mailbox-view') || ''; } catch { /* ignore */ }

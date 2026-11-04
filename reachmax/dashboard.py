@@ -1158,13 +1158,19 @@ async def list_mailboxes():
             "id": mailbox.id, "label": mailbox.label or mailbox.id,
             "address": mailbox.address, "from_name": mailbox.from_name,
             "provider": mailbox.provider, "status": row.get("status"),
-            "paused_reason": row.get("paused_reason"),
+            "paused_reason": (
+                "Provider authentication failed; check mailbox credentials."
+                if row.get("status") == "error" else
+                "Paused by an operator." if row.get("status") == "paused" else ""
+            ),
             "paused_at": row.get("paused_at"), "paused_by": row.get("paused_by"),
             "max_daily_sends": mailbox.max_daily_sends,
             "effective_daily_cap": registry.effective_cap(mailbox.id),
             "sent_today": await state.count_mailbox_sent_today(mailbox.id),
             "last_sent_at": row.get("last_sent_at"),
-            "last_error": row.get("last_error"), "last_error_at": row.get("last_error_at"),
+            "last_error": ("Provider reported an error. Review the mailbox configuration and server log."
+                           if row.get("last_error_at") else ""),
+            "last_error_at": row.get("last_error_at"),
             "send_window": ({"start": window.start, "end": window.end,
                              "weekdays_only": window.weekdays_only,
                              "timezone_mode": window.timezone_mode,
@@ -1173,6 +1179,16 @@ async def list_mailboxes():
     events = await query_db(
         "SELECT mailbox_id, kind, detail, created_at FROM mailbox_events "
         "ORDER BY created_at DESC LIMIT 100")
+    safe_event_details = {
+        "sent": "Email sent",
+        "bounce": "A delivery bounce was received",
+        "paused": "Mailbox paused",
+        "resumed": "Mailbox resumed",
+        "auth_error": "Provider authentication failed",
+        "rate_limited": "Provider rate limit reached",
+    }
+    for event in events:
+        event["detail"] = safe_event_details.get(event.get("kind"), "Mailbox activity recorded")
     from reachmax.config import compliance_of
     compliance = compliance_of(config)
     missing_compliance = []
@@ -1182,6 +1198,35 @@ async def list_mailboxes():
         missing_compliance.append("Set compliance.opt_out_line to enable cold email.")
     return {"mailboxes": result, "events": events,
             "cold_send_block_reason": " ".join(missing_compliance)}
+
+
+@app.post("/api/mailboxes/{mailbox_id}/test")
+async def test_mailbox_connection(mailbox_id: str):
+    """Check provider authentication/inbox access without sending a message."""
+    from reachmax.config import load_config
+    from reachmax.mailboxes import MailboxRegistry
+    state = _state()
+    await state.init_db()
+    try:
+        config = load_config(str(_resolve_config_file()))
+    except Exception:
+        return JSONResponse({"error": "mailbox configuration could not be loaded"}, status_code=500)
+    registry = MailboxRegistry(config)
+    await registry.sync(state)
+    if not await state.get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+    provider = registry.provider(mailbox_id)
+    if provider is None:
+        return JSONResponse({"success": False, "detail": "Mailbox is disabled or unavailable."},
+                            status_code=409)
+    try:
+        ok, _detail = await provider.test_connection()
+    except Exception:
+        ok = False
+    return {"success": bool(ok), "detail": (
+        "Authentication and inbox access succeeded; no message was sent."
+        if ok else "Connection check failed. Review mailbox credentials and provider access."
+    )}
 
 
 @app.post("/api/mailboxes/{mailbox_id}/pause")
@@ -1207,9 +1252,18 @@ async def mailbox_events(mailbox_id: str):
     state = _state()
     if not await state.get_mailbox(mailbox_id):
         return JSONResponse({"error": "unknown mailbox"}, status_code=404)
-    return await query_db(
+    rows = await query_db(
         "SELECT kind, detail, created_at FROM mailbox_events WHERE mailbox_id=? "
         "ORDER BY created_at DESC LIMIT 100", (mailbox_id,))
+    safe_details = {
+        "sent": "Email sent", "bounce": "A delivery bounce was received",
+        "paused": "Mailbox paused", "resumed": "Mailbox resumed",
+        "auth_error": "Provider authentication failed",
+        "rate_limited": "Provider rate limit reached",
+    }
+    for row in rows:
+        row["detail"] = safe_details.get(row.get("kind"), "Mailbox activity recorded")
+    return rows
 
 
 @app.get("/api/sending-mode")
