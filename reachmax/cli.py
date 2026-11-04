@@ -916,13 +916,12 @@ def cmd_retry_writes(args):
 
 def cmd_warmup(args):
     """Check whether the sending domain is ready for cold email."""
-    import os
-
     from dotenv import load_dotenv
 
     from reachmax import deliverability as d
     from reachmax.agents.handler import BOUNCE_COUNT_KEY
-    from reachmax.config import ConfigError, load_config
+    from reachmax.config import ConfigError, load_config, load_mailbox_env
+    from reachmax.mailboxes import configured_mailboxes
     from reachmax.paths import PROJECT_ROOT
     from reachmax.state import StateManager
 
@@ -932,53 +931,79 @@ def cmd_warmup(args):
     except ConfigError as e:
         print(f"\n  {e}\n")
         raise SystemExit(1)
-    email = config.channels.email
-    smtp_user = os.getenv("REACHMAX_SMTP_USERNAME", "").strip() if email.provider == "smtp" else ""
-    sender = smtp_user if "@" in smtp_user else config.persona.email
-    domain = (args.domain or sender.rpartition("@")[2]).strip().lower().rstrip(".")
-    if not d.DOMAIN_RE.match(domain):
-        print("\n  No valid sending domain found. Pass one: reachmax warmup yourdomain.com\n")
-        raise SystemExit(1)
-
-    async def _history():
-        state = StateManager()
-        await state.init_db()
-        return (await state.count_outbox_sent(),
-                int(await state.get_setting(BOUNCE_COUNT_KEY) or 0))
-
-    smtp_host = os.getenv("REACHMAX_SMTP_HOST", "").strip() if email.provider == "smtp" else ""
-    print(f"\n  Deliverability check - {domain}")
-    print("  " + "=" * 56)
-    sections = [
-        ("Authentication", [d.check_mx(domain), d.check_spf(domain),
-                            d.check_dkim(domain, email.warmup.dkim_selector),
-                            d.check_dmarc(domain)]),
-        ("Reputation", [d.check_domain_age(domain), *d.check_domain_blocklists(domain)]
-         + (d.check_ip_blocklists(smtp_host) if smtp_host else [])),
-        ("Warmup & sending", [d.check_warmup(email.warmup, email.max_daily_sends,
-                                             provider=email.provider),
-                              _warmup_service_check(sender, email.warmup),
-                              d.check_send_history(*asyncio.run(_history()))]),
-    ]
     icons = {d.OK: "OK  ", d.WARN: "WARN", d.FAIL: "FAIL", d.INFO: "info"}
-    failed = warned = unknown = 0
-    for title, checks in sections:
-        print(f"\n  {title}")
-        for c in checks:
-            failed += c.status == d.FAIL
-            warned += c.status == d.WARN
-            unknown += c.unknown and title == "Authentication"
-            print(f"    [{icons[c.status]}] {c.name:<26} {c.detail}")
-
-    print("\n  " + "=" * 56)
-    if failed:
-        print(f"  NOT READY - fix the {failed} FAIL item(s) before any cold email.")
-    elif unknown:
-        print(f"  NOT CHECKED - {unknown} authentication lookup(s) failed; run again.")
-    elif warned:
-        print(f"  READY WITH CAVEATS - {warned} warning(s); keep volume low.")
+    configured = configured_mailboxes(config)
+    if getattr(args, "all_mailboxes", False):
+        targets = configured
+    elif getattr(args, "mailbox", ""):
+        targets = [m for m in configured if m.id == args.mailbox]
+        if not targets:
+            print(f"\n  Unknown mailbox '{args.mailbox}'. Check channels.email.mailboxes.\n")
+            raise SystemExit(1)
     else:
-        print("  READY - send within today's cap and watch bounces.")
+        targets = configured[:1]
+
+    totals = {"failed": 0, "warned": 0, "unknown": 0}
+    for mailbox in targets:
+        sender = mailbox.address or config.persona.email
+        domain = (args.domain or sender.rpartition("@")[2]).strip().lower().rstrip(".")
+        if not d.DOMAIN_RE.match(domain):
+            print(f"\n  {mailbox.id}: no valid sending domain. Pass one: reachmax warmup yourdomain.com\n")
+            totals["failed"] += 1
+            continue
+        env = load_mailbox_env(mailbox.id, mailbox.provider,
+                               legacy=not bool(config.channels.email.mailboxes))
+        smtp_host = env.smtp_host if mailbox.provider == "smtp" else ""
+
+        async def _history(mailbox_id=mailbox.id):
+            state = StateManager()
+            await state.init_db()
+            async with state._connect() as db:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM outbox WHERE mailbox_id=? AND status='sent'",
+                    (mailbox_id,)) as cursor:
+                    sent_count = (await cursor.fetchone())[0]
+                async with db.execute(
+                    "SELECT COUNT(*) FROM mailbox_events WHERE mailbox_id=? AND kind='bounce'",
+                    (mailbox_id,)) as cursor:
+                    bounce_count = (await cursor.fetchone())[0]
+            if mailbox_id == "default" and not config.channels.email.mailboxes:
+                bounce_count = int(await state.get_setting(BOUNCE_COUNT_KEY) or 0)
+            return sent_count, bounce_count
+
+        print(f"\n  Deliverability check - {mailbox.label or mailbox.id} <{sender}> · {domain}")
+        print("  " + "=" * 64)
+        sections = [
+            ("Authentication", [d.check_mx(domain), d.check_spf(domain),
+                                d.check_dkim(domain, mailbox.warmup.dkim_selector),
+                                d.check_dmarc(domain)]),
+            ("Reputation", [d.check_domain_age(domain), *d.check_domain_blocklists(domain)]
+             + (d.check_ip_blocklists(smtp_host) if smtp_host else [])),
+            ("Warmup & sending", [d.check_warmup(mailbox.warmup, mailbox.max_daily_sends,
+                                                 provider=mailbox.provider),
+                                  _warmup_service_check(sender, mailbox.warmup),
+                                  d.check_send_history(*asyncio.run(_history()))]),
+        ]
+        failed = warned = unknown = 0
+        for title, checks in sections:
+            print(f"\n  {title}")
+            for c in checks:
+                failed += c.status == d.FAIL
+                warned += c.status == d.WARN
+                unknown += c.unknown and title == "Authentication"
+                print(f"    [{icons[c.status]}] {c.name:<26} {c.detail}")
+        totals["failed"] += failed
+        totals["warned"] += warned
+        totals["unknown"] += unknown
+        print("\n  " + "=" * 64)
+        if failed:
+            print(f"  NOT READY - fix the {failed} FAIL item(s) before any cold email.")
+        elif unknown:
+            print(f"  NOT CHECKED - {unknown} authentication lookup(s) failed; run again.")
+        elif warned:
+            print(f"  READY WITH CAVEATS - {warned} warning(s); keep volume low.")
+        else:
+            print("  READY - send within today's cap and watch bounces.")
     print("\n  What DNS can't tell you (the real reputation signal):")
     print("    - Google Postmaster Tools: https://postmaster.google.com - add the domain;")
     print("      it shows Gmail's spam rate and domain reputation once you send volume.")
@@ -986,7 +1011,7 @@ def cmd_warmup(args):
     print("      and aim for 9/10+. TrulyInbox shows the warmup inbox rate, and with it")
     print("      connected (reachmax trulyinbox connect) Reach Max reads it into this report.")
     print("      Wait for ~95%+ inbox for a week before relying on cold sends.\n")
-    if failed or unknown:
+    if totals["failed"] or totals["unknown"]:
         raise SystemExit(1)
 
 
@@ -1274,6 +1299,9 @@ def main():
         "warmup", help="Check if your sending domain is set up and warmed up for cold email")
     sub.add_argument("domain", nargs="?", default="",
                      help="Domain to check (default: your sending mailbox's domain)")
+    sub.add_argument("--mailbox", default="", help="Check one configured mailbox")
+    sub.add_argument("--all", dest="all_mailboxes", action="store_true",
+                     help="Check every configured mailbox")
     sub.set_defaults(func=cmd_warmup)
 
     sub = subparsers.add_parser(

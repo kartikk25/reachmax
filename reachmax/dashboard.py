@@ -802,41 +802,66 @@ def _pipeline_bucket(status: str | None, stage: str | None, intent: str | None,
 
 
 @app.get("/api/stats")
-async def get_stats():
+async def get_stats(request: Request):
     """Pipeline overview stats."""
     try:
+        await _state().init_db()
+        mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+        if mailbox_id and not await _state().get_mailbox(mailbox_id):
+            return JSONResponse({"error": "unknown mailbox"}, status_code=404)
+        prospect_filter = " WHERE mailbox_id=?" if mailbox_id else ""
+        prospect_params = (mailbox_id,) if mailbox_id else ()
         prospects = await query_db(
-            "SELECT status, COUNT(*) as count FROM prospects GROUP BY status"
+            "SELECT status, COUNT(*) as count FROM prospects" + prospect_filter + " GROUP BY status",
+            prospect_params,
         )
         prospect_total = sum(r["count"] for r in prospects)
         prospect_map = {r["status"]: r["count"] for r in prospects}
 
-        campaigns = await query_db(
-            "SELECT status, COUNT(*) as count FROM campaigns GROUP BY status"
-        )
-        campaign_map = {r["status"]: r["count"] for r in campaigns}
+        campaigns = await query_db("SELECT id, status, prospect_ids_json FROM campaigns")
+        if mailbox_id:
+            owned = {r["id"] for r in await query_db(
+                "SELECT id FROM prospects WHERE mailbox_id=?", (mailbox_id,))}
+            scoped_campaigns = []
+            for campaign in campaigns:
+                try:
+                    ids = json.loads(campaign.get("prospect_ids_json") or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    ids = []
+                if any(pid in owned for pid in ids):
+                    scoped_campaigns.append(campaign)
+            campaigns = scoped_campaigns
+        campaign_map: dict[str, int] = {}
+        for campaign in campaigns:
+            campaign_map[campaign["status"]] = campaign_map.get(campaign["status"], 0) + 1
 
         conversations = await query_db(
-            "SELECT status, COUNT(*) as count FROM conversations GROUP BY status"
+            "SELECT status, COUNT(*) as count FROM conversations"+
+            (" WHERE mailbox_id=?" if mailbox_id else "")+" GROUP BY status",
+            prospect_params,
         )
         convo_map = {r["status"]: r["count"] for r in conversations}
 
         # Where each contact stands. Prospect status alone stops at
         # "replied"; how a reply went lives on its latest conversation.
-        rows = await query_db("""
-            SELECT p.status, p.email_status, l.stage, l.intent, COUNT(*) AS count FROM prospects p
-            LEFT JOIN (SELECT prospect_id, stage, intent, ROW_NUMBER() OVER (
-                         PARTITION BY prospect_id ORDER BY updated_at DESC, created_at DESC) AS rn
-                       FROM conversations) l ON l.prospect_id = p.id AND l.rn = 1
-            GROUP BY p.status, p.email_status, l.stage, l.intent
-        """)
+        convo_scope = " WHERE mailbox_id=?" if mailbox_id else ""
+        prospect_scope = " WHERE p.mailbox_id=?" if mailbox_id else ""
+        pipeline_sql = (
+            "SELECT p.status, p.email_status, l.stage, l.intent, COUNT(*) AS count FROM prospects p "
+            "LEFT JOIN (SELECT prospect_id, stage, intent, ROW_NUMBER() OVER ("
+            "PARTITION BY prospect_id ORDER BY updated_at DESC, created_at DESC) AS rn "
+            "FROM conversations" + convo_scope + ") l ON l.prospect_id=p.id AND l.rn=1 "
+            + prospect_scope + " GROUP BY p.status, p.email_status, l.stage, l.intent"
+        )
+        rows = await query_db(pipeline_sql, ((mailbox_id, mailbox_id) if mailbox_id else ()))
         pipeline = dict.fromkeys(
             ("to_write", "contacted", "replied", "interested", "ready_to_meet", "closed_out"), 0)
         for r in rows:
             pipeline[_pipeline_bucket(r["status"], r["stage"], r["intent"],
                                       r["email_status"])] += r["count"]
 
-        actions = await query_db("SELECT COUNT(*) as count FROM actions")
+        actions = await query_db("SELECT COUNT(*) as count FROM actions"+
+                                 (" WHERE mailbox_id=?" if mailbox_id else ""), prospect_params)
         action_count = actions[0]["count"] if actions else 0
 
         # usage_log rows are keyed by the LOCAL date (increment_usage /
@@ -1554,7 +1579,11 @@ async def export_prospects(all: bool = False, min_score: int = 0, email_status: 
 
 
 @app.get("/api/campaigns")
-async def get_campaigns():
+async def get_campaigns(request: Request):
+    await _state().init_db()
+    mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+    if mailbox_id and not await _state().get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
     rows = await query_db("SELECT * FROM campaigns ORDER BY created_at DESC LIMIT 100")
     reachmax_sends = _reachmax_can_send()
     send_as = "" if reachmax_sends else _send_as()
@@ -1575,9 +1604,12 @@ async def get_campaigns():
         row["recipients"] = await query_db(
             f"SELECT id, email, first_name, last_name, company, title, status, email_status, "
             f"source, personalization_notes FROM prospects "
-            f"WHERE id IN ({','.join('?' * len(ids))}) AND email != ''",
-            tuple(ids),
+            f"WHERE id IN ({','.join('?' * len(ids))}) AND email != ''"+
+            (" AND mailbox_id=?" if mailbox_id else ""),
+            tuple(ids) + ((mailbox_id,) if mailbox_id else ()),
         ) if ids else []
+        if mailbox_id and not row["recipients"]:
+            continue
         row["send_as"] = send_as
         # A cold email sent by hand needs the same footer Reach Max adds.
         row["footer"] = footer
@@ -1765,21 +1797,27 @@ async def set_conversation_status(convo_id: str, request: Request):
 
 
 @app.get("/api/trend")
-async def get_trend(days: int = 14, tz: int = 0):
+async def get_trend(request: Request, days: int = 14, tz: int = 0):
     """Daily counts for the last `days` days in the viewer's time zone
     (`tz`: minutes east of UTC; stored times are UTC): contacts found,
     emails sent, first replies. Days with nothing are 0."""
     from datetime import datetime, timedelta, timezone
     days = max(1, min(90, days))
+    mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+    await _state().init_db()
+    if mailbox_id and not await _state().get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
     tz = max(-840, min(840, tz))
     shift = f"{tz:+d} minutes"
     today = (datetime.now(timezone.utc) + timedelta(minutes=tz)).date()
     labels = [(today - timedelta(days=n)).isoformat() for n in range(days - 1, -1, -1)]
 
     async def per_day(table: str, column: str, where: str = "") -> list[int]:
+        mailbox_filter = " AND mailbox_id=?" if mailbox_id else ""
         rows = await query_db(
             f"SELECT date({column}, ?) AS d, COUNT(*) AS n FROM {table} "
-            f"WHERE date({column}, ?) >= ? {where} GROUP BY d", (shift, shift, labels[0]))
+            f"WHERE date({column}, ?) >= ? {where}{mailbox_filter} GROUP BY d",
+            (shift, shift, labels[0]) + ((mailbox_id,) if mailbox_id else ()))
         counts = {r["d"]: r["n"] for r in rows}
         return [counts.get(day, 0) for day in labels]
 
@@ -2049,7 +2087,7 @@ def _eta_text(minutes) -> str:
 
 
 @app.get("/api/live-status")
-async def get_live_status():
+async def get_live_status(request: Request):
     """Plain-language progress: each pipeline step, what is running, how long is left.
 
     Built for someone who would otherwise keep asking "what's the status?".
@@ -2058,18 +2096,30 @@ async def get_live_status():
     counts only what the step can act on (a business with no website is never
     read), so a finished step always reaches 100% instead of sticking.
     """
+    await _state().init_db()
+    mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+    if mailbox_id and not await _state().get_mailbox(mailbox_id):
+        return JSONResponse({"error": "unknown mailbox"}, status_code=404)
     now = datetime.now(timezone.utc).replace(tzinfo=None)  # DB stores naive UTC
     has_site = "COALESCE(domain, '') != ''"
-    companies = await _scalar("SELECT COUNT(*) FROM companies")
-    with_site = await _scalar(f"SELECT COUNT(*) FROM companies WHERE {has_site}")
+    company_filter = " AND mailbox_id=?" if mailbox_id else ""
+    company_params = (mailbox_id,) if mailbox_id else ()
+    companies = await _scalar("SELECT COUNT(*) FROM companies"+
+                              (" WHERE mailbox_id=?" if mailbox_id else ""), company_params)
+    with_site = await _scalar(f"SELECT COUNT(*) FROM companies WHERE {has_site}"+company_filter,
+                              company_params)
     no_site = companies - with_site
     profiled = await _scalar(
-        f"SELECT COUNT(*) FROM companies WHERE {has_site} AND profile_checked_at IS NOT NULL")
+        f"SELECT COUNT(*) FROM companies WHERE {has_site} AND profile_checked_at IS NOT NULL"+company_filter,
+        company_params)
     checked = await _scalar(
         f"SELECT COUNT(*) FROM companies WHERE {has_site} "
-        "AND profile_checked_at IS NOT NULL AND prospects_checked_at IS NOT NULL")
+        "AND profile_checked_at IS NOT NULL AND prospects_checked_at IS NOT NULL"+company_filter,
+        company_params)
 
-    prospects = await query_db("SELECT id, email, email_status, status FROM prospects")
+    prospects = await query_db("SELECT id, email, email_status, status FROM prospects"+
+                               (" WHERE mailbox_id=?" if mailbox_id else ""),
+                               company_params)
     with_email = [p for p in prospects if p.get("email")]
     by_status: dict[str, int] = {}
     for p in with_email:
@@ -2088,12 +2138,15 @@ async def get_live_status():
         except (json.JSONDecodeError, TypeError):
             ids = []
         if isinstance(ids, list):
-            drafted.update(i for i in ids if isinstance(i, str))
+            drafted.update(i for i in ids if isinstance(i, str)
+                           and (not mailbox_id or i in {p["id"] for p in prospects}))
     sent = {p["id"] for p in prospects if p.get("status") in SENT_STATUSES}
     # Who is left for the user to send by hand: only when Reach Max can't send
     # itself, and never someone Reach Max has queued, sent to, or can't reach.
     reachmax_sends = _reachmax_can_send()
-    awaiting_review = await _scalar("SELECT COUNT(*) FROM outbox WHERE status = 'pending_review'")
+    awaiting_review = await _scalar(
+        "SELECT COUNT(*) FROM outbox WHERE status = 'pending_review'"+
+        (" AND mailbox_id=?" if mailbox_id else ""), company_params)
     by_hand: set[str] = set()
     if not reachmax_sends:
         skip = await _reachmax_committed_ids() | await _hand_sent_ids()
@@ -2120,15 +2173,16 @@ async def get_live_status():
             continue
         if run.get("stage") == "profile" and started:
             done_in_run = await _scalar(
-                f"SELECT COUNT(*) FROM companies WHERE {has_site} AND profile_checked_at >= ?",
-                (run["started_at"],))
+                f"SELECT COUNT(*) FROM companies WHERE {has_site} AND profile_checked_at >= ?"+
+                company_filter, (run["started_at"],) + company_params)
             left = max(0, with_site - profiled)
             if left and done_in_run and elapsed > 0:
                 item["eta_min"] = left / (done_in_run / elapsed) / 60
         running.append(item)
 
     last_contact = _parse_ts(await _first(
-        "SELECT MAX(prospects_checked_at) AS t FROM companies"))
+        "SELECT MAX(prospects_checked_at) AS t FROM companies"+
+        (" WHERE mailbox_id=?" if mailbox_id else ""), company_params))
     finding_emails = bool(
         last_contact and (now - last_contact).total_seconds() < CONTACT_ACTIVE_SECONDS)
     reading = any(r["stage"] == "profile" for r in running)
@@ -2213,7 +2267,7 @@ def _require_approval_now() -> bool:
 
 
 @app.get("/api/today")
-async def get_today():
+async def get_today(request: Request):
     """What needs a human, right now.
 
     The dashboard opens here rather than on a setup checklist: the question a
@@ -2227,28 +2281,41 @@ async def get_today():
 
         state = _state()
         await state.init_db()
+        mailbox_id = (request.query_params.get("mailbox_id") or "").strip()
+        if mailbox_id and not await state.get_mailbox(mailbox_id):
+            return JSONResponse({"error": "unknown mailbox"}, status_code=404)
         await seed_signal_catalog(state)
 
         codes = await state.get_signal_codes()
         proposed = [c for c in codes if c.get("status") == "proposed"]
         confirmed = [c for c in codes if c.get("status") == "confirmed"]
-        pending = await state.get_outbox(status="pending_review", limit=200)
-        approved = await state.get_outbox(status="approved", limit=200)
+        pending = await state.get_outbox(status="pending_review", limit=200, mailbox_id=mailbox_id)
+        approved = await state.get_outbox(status="approved", limit=200, mailbox_id=mailbox_id)
         paused = await state.get_setting("sending_paused")
-        counts = await state.count_prospects_by_status()
+        count_rows = await query_db("SELECT status, COUNT(*) AS n FROM prospects"+
+                                    (" WHERE mailbox_id=?" if mailbox_id else "")+
+                                    " GROUP BY status", (mailbox_id,) if mailbox_id else ())
+        counts = {r["status"]: r["n"] for r in count_rows}
 
         convos = await query_db(
-            "SELECT COUNT(*) AS n FROM conversations WHERE status = 'open'"
+            "SELECT COUNT(*) AS n FROM conversations WHERE status = 'open'"+
+            (" AND mailbox_id=?" if mailbox_id else ""), (mailbox_id,) if mailbox_id else ()
         )
         open_convos = convos[0]["n"] if convos else 0
         handed = await query_db(
-            "SELECT COUNT(*) AS n FROM conversations WHERE status = 'needs_human'"
+            "SELECT COUNT(*) AS n FROM conversations WHERE status = 'needs_human'"+
+            (" AND mailbox_id=?" if mailbox_id else ""), (mailbox_id,) if mailbox_id else ()
         )
         needs_human = handed[0]["n"] if handed else 0
-        companies = await query_db("SELECT COUNT(*) AS n FROM companies")
+        companies = await query_db("SELECT COUNT(*) AS n FROM companies"+
+                                   (" WHERE mailbox_id=?" if mailbox_id else ""),
+                                   (mailbox_id,) if mailbox_id else ())
         n_companies = companies[0]["n"] if companies else 0
 
-        unprofiled_count = await state.count_companies_needing_profile()
+        unprofiled_count = await state.count_companies_needing_profile(mailbox_id=mailbox_id)
+        mailbox_health = (await list_mailboxes()).get("mailboxes", [])
+        if mailbox_id:
+            mailbox_health = [m for m in mailbox_health if m.get("id") == mailbox_id]
         stats = {
             "companies": n_companies,
             "prospects": sum(counts.values()),
@@ -2260,6 +2327,8 @@ async def get_today():
             "signals_proposed": len(proposed),
             "email_provider": _current_provider(),
             "unprofiled": unprofiled_count,
+            "mailbox_id": mailbox_id,
+            "mailboxes": mailbox_health,
         }
 
         # Ordered by how much it blocks Reach Max from doing anything at all.

@@ -587,6 +587,15 @@ function renderFigures(stats) {
     '<div class="kpi-main"><span class="kpi-value' + (value ? '' : ' zero') + '">' + value + '</span>' + spark + '</div>' +
     '<span class="kpi-note">' + note + '</span></div>';
 
+  const health = document.getElementById('today-mailbox-health');
+  const mailboxes = stats.mailboxes || [];
+  if (health) health.innerHTML = mailboxes.length
+    ? '<div class="card" style="margin-bottom:12px"><b>Mailbox health</b><div class="facts">' +
+      mailboxes.map(m => '<span><b>' + escHtml(m.label) + '</b> · ' + escHtml(m.status) + ' · ' +
+        Number(m.sent_today || 0) + '/' + Number(m.effective_daily_cap || 0) + ' sent today</span>').join('') +
+      '</div></div>'
+    : '';
+
   // Instantly sends from its own servers, so the Outbox never sees them.
   const sent = stats.email_provider === 'instantly'
     ? card('Emails sent', '&mdash;', '', 'Instantly tracks sends')

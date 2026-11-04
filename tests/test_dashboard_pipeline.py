@@ -40,6 +40,23 @@ def test_pipeline_buckets_each_contact_once(client):
     assert sum(pipe.values()) == len(people)
 
 
+def test_mailbox_filter_applies_to_dashboard_totals_and_rejects_unknown_ids(client):
+    asyncio.run(StateManager(str(client.db_path)).init_db())
+    assert client.get("/api/mailboxes").status_code == 200  # syncs synthesized default
+    _sql(client.db_path,
+         "INSERT INTO prospects (id, status, mailbox_id) VALUES ('owned', 'new', 'default')")
+    _sql(client.db_path,
+         "INSERT INTO prospects (id, status) VALUES ('unassigned', 'new')")
+
+    assert client.get("/api/stats").json()["prospects"]["total"] == 2
+    assert client.get("/api/stats?mailbox_id=default").json()["prospects"]["total"] == 1
+    assert client.get("/api/today?mailbox_id=default").json()["stats"]["prospects"] == 1
+    assert client.get("/api/trend?mailbox_id=default").status_code == 200
+    assert client.get("/api/live-status?mailbox_id=default").status_code == 200
+    assert client.get("/api/campaigns?mailbox_id=default").status_code == 200
+    assert client.get("/api/stats?mailbox_id=unknown").status_code == 404
+
+
 def test_discover_tab_knows_how_many_sites_are_unread(client):
     asyncio.run(StateManager(str(client.db_path)).init_db())
     data = client.get("/api/discover/providers").json()

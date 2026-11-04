@@ -2289,15 +2289,17 @@ class StateManager:
             ) as cursor:
                 return [dict(r) for r in await cursor.fetchall()]
 
-    async def count_companies_needing_profile(self, stale_days: int = 90) -> int:
+    async def count_companies_needing_profile(self, stale_days: int = 90,
+                                              mailbox_id: str | None = None) -> int:
         async with self._connect() as db:
             async with db.execute(
                 f"""SELECT COUNT(*) FROM companies c
                    {_LAST_PROFILED_JOIN}
                    WHERE c.domain != ''
+                     AND (? = '' OR c.mailbox_id = ?)
                      AND ({_LAST_PROFILED} IS NULL
                           OR {_LAST_PROFILED} < datetime('now', ?))""",
-                (f"-{int(stale_days)} days",),
+                (mailbox_id or "", mailbox_id or "", f"-{int(stale_days)} days"),
             ) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
