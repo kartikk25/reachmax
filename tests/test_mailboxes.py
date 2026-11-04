@@ -358,3 +358,61 @@ async def test_multi_mailbox_cold_send_requires_both_compliance_fields(tmp_path)
     assert status == "failed"
     assert "compliance.postal_address" in reason
     assert "compliance.opt_out_line" in reason
+
+
+@pytest.mark.asyncio
+async def test_sender_distributes_cold_sends_across_three_mailboxes(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from reachmax.agents.sender import Sender
+    from reachmax.config import EnvConfig
+    from reachmax.models.prospect import Prospect
+    from tests.test_outbox_native import FakeProvider
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    config = load_config("reachmax.yaml")
+    config.compliance.postal_address = "1 Main Street, Austin, TX 78701"
+    config.compliance.opt_out_line = "Reply no thanks to stop."
+    config.channels.email.send_window = None
+    config.channels.email.min_gap_per_mailbox_seconds = 0
+    config.channels.email.mailboxes = [
+        MailboxConfig(**mailbox(id=f"sales_{letter}", address=f"{letter}@example.com",
+                                max_daily_sends=1))
+        for letter in ("a", "b", "c")
+    ]
+    providers = {m.id: FakeProvider() for m in config.channels.email.mailboxes}
+    sender = Sender(None, state, config, EnvConfig())
+    await sender.mailbox_registry.sync(state)
+    sender.mailbox_registry.provider = lambda mailbox_id: providers[mailbox_id]
+    sender.send_pacing = False
+
+    for index, mailbox_id in enumerate(("sales_a", "sales_b", "sales_c")):
+        company = Company(name=f"Company {index}", domain=f"company{index}.example")
+        company_id = await state.add_company(company)
+        prospect = Prospect(company_id=company_id, first_name="Jane", last_name="Smith",
+                           email=f"jane{index}@company{index}.example", email_status="verified")
+        prospect_id = await state.add_prospect(prospect)
+        await state.add_outbox_item(
+            prospect_id=prospect_id, to_email=prospect.email,
+            subject="A quick question", body="Would this be useful?",
+            send_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+            status="approved", campaign_id="pool-test", step=index + 1,
+        )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def advancing_clock():
+        nonlocal now
+        result = now
+        now += timedelta(seconds=60)
+        return result
+
+    monkeypatch.setattr("reachmax.agents.sender._utcnow", advancing_clock)
+    await sender._drain_due()
+
+    rows = await state.get_outbox()
+    assert {mid: len(provider.sent) for mid, provider in providers.items()} == {
+        "sales_a": 1, "sales_b": 1, "sales_c": 1,
+    }, [(row["status"], row["error"], row.get("mailbox_id")) for row in rows]
+    assigned = await state.get_outbox(status="sent")
+    assert {item["mailbox_id"] for item in assigned} == set(providers)
