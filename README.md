@@ -45,6 +45,7 @@ confirmed signals, searching contacts, and the same screen in dark mode:
 - [The sub-agents](#the-sub-agents)
 - [Nothing sends without you](#nothing-sends-without-you)
 - [The dashboard](#the-dashboard)
+- [Multi-mailbox sending](#multi-mailbox-sending)
 - [How the data is stored](#how-the-data-is-stored)
 - [Configuration](#configuration)
 - [Using a ChatGPT plan instead (Codex)](#using-a-chatgpt-plan-instead-codex)
@@ -650,6 +651,21 @@ raw-data export for inspection: it includes opted-out and unverified contacts
 and should not be imported as an outreach list. The dashboard's prospect CSV
 download follows the same policy; `?all=true` selects its raw export.
 
+
+## Multi-mailbox sending
+
+Reach Max can distribute native Gmail, Microsoft 365, and SMTP sends across
+multiple real sender accounts. Each sender has its own daily cap and OAuth
+token; a prospect and their company keep the same mailbox for follow-ups.
+Cold email uses the 05:00–17:00 send window, a 15-second global pace, and the
+existing approval ladder. Set up the pool, credentials, and commands in the
+[multi-mailbox guide](docs/multi-mailbox.md). Instantly remains a single
+provider because it rotates accounts itself.
+
+Multi-mailbox cold email stays blocked until the physical postal address and
+opt-out line are configured. This build has offline tests for routing and
+limits; verify OAuth and mailbox connectivity with `reachmax mailbox test <id>`
+before approving any real sends.
 
 ## Using a ChatGPT plan instead (Codex)
 

@@ -552,6 +552,10 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_mailbox_events_mailbox_created
         ON mailbox_events(mailbox_id, created_at);
     """,
+    # ── v16: per-mailbox provider backoff ──
+    """
+    ALTER TABLE mailboxes ADD COLUMN cooldown_until TIMESTAMP;
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -830,6 +834,16 @@ class StateManager:
                 (str(uuid.uuid4()), mailbox_id, reason[:300]))
             await db.commit()
 
+    async def set_mailbox_cooldown(self, mailbox_id: str, until: str, reason: str) -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "UPDATE mailboxes SET cooldown_until=?, last_error=?, last_error_at=CURRENT_TIMESTAMP, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?", (until, reason[:300], mailbox_id))
+            await db.execute(
+                "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, 'rate_limited', ?)",
+                (str(uuid.uuid4()), mailbox_id, reason[:300]))
+            await db.commit()
+
     async def set_mailbox_status(self, mailbox_id: str, status: str,
                                  reason: str = "", by: str = "user") -> bool:
         if status not in {"active", "paused"}:
@@ -846,6 +860,15 @@ class StateManager:
                     "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, ?, ?)",
                     (str(uuid.uuid4()), mailbox_id,
                      "paused" if status == "paused" else "resumed", reason))
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def disable_mailbox(self, mailbox_id: str) -> bool:
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "UPDATE mailboxes SET status='disabled', paused_reason='Disabled by user', "
+                "paused_at=CURRENT_TIMESTAMP, paused_by='user', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (mailbox_id,))
             await db.commit()
             return cursor.rowcount > 0
 

@@ -2718,6 +2718,7 @@ loadSetupStatus();
 loadRuns();
 loadTodayActivity();
 loadReachMaxStatus();
+loadMailboxes();
 
 loadLiveStatus();
 
@@ -2751,6 +2752,7 @@ setInterval(() => {
     case 'campaigns': loadCampaigns(); break;
     case 'conversations': loadConversations(); break;
     case 'activity': loadActivity(); break;
+    case 'mailboxes': loadMailboxes(); break;
     case 'usage': loadUsage(); break;
     case 'controls': loadLogs(); break;
   }

@@ -1,14 +1,14 @@
 # Multi-mailbox sending
 
 Reach Max keeps the existing prospecting pipeline and adds mailbox-specific
-sender identities and runtime state. A single sender remains the default: when
-`channels.email.mailboxes` is absent or empty, Reach Max derives one `default`
-mailbox from `persona.email`, `persona.name`, and the existing email provider,
-cap, warmup, and send-window settings.
+sender identities and runtime state. With no configured `mailboxes` list it
+continues using one synthesized `default` mailbox.
 
-## Configuration
+## Configure a pool
 
-Mailbox settings live in `reachmax.yaml` and contain no credentials:
+Add entries under `channels.email.mailboxes` in `reachmax.yaml` (or your local
+override). These example addresses are placeholders; configure only real
+mailboxes whose identities you control.
 
 ```yaml
 channels:
@@ -17,10 +17,15 @@ channels:
     require_approval: true
     send_interval_seconds: 15
     send_jitter_seconds: 4
-    mailbox_strategy: least_used
+    mailbox_strategy: least_used # round_robin | least_used | weighted
     min_gap_per_mailbox_seconds: 120
     bounce_window_sends: 100
     failover_followups: false
+    send_window:
+      start: "05:00"
+      end: "17:00"
+      weekdays_only: true
+      timezone_mode: recipient # recipient | mailbox | fixed
     mailboxes:
       - id: sales_a
         label: Sales A
@@ -32,30 +37,48 @@ channels:
         enabled: true
 ```
 
-Mailbox ids must be unique short slugs. Sender addresses must be unique and
-valid, and every mailbox needs a real `from_name`, a supported provider, and a
-positive daily cap. `instantly` remains a single-provider configuration and
-cannot be combined with a `mailboxes` list.
+Each entry needs a unique short id, a unique valid sender address, a real
+`from_name`, a supported provider (`gmail`, `microsoft`, or `smtp`), and a
+positive daily cap. An optional mailbox `send_window` overrides the global
+window. Use `timezone_mode: mailbox` with a mailbox IANA time zone, or
+`timezone_mode: fixed` with a fixed IANA time zone. Replies bypass cold-email
+windows and warmup caps. A mailbox remains sticky to its prospect and company;
+queued follow-ups wait if that sender is paused or ineligible.
 
-The sender list is synced into `data/reachmax.db` at runtime. Removing an id
-marks its row disabled so send history and mailbox events remain available.
-Existing records receive the `default` mailbox id during the additive schema
-migration.
+The sender list is synced into `data/reachmax.db`. Removing or disabling an id
+preserves its history. Existing records receive the `default` mailbox id when
+the mailbox columns are first added. New records stay unassigned until the
+sender selects a mailbox.
 
-## Credentials
+## Credentials and OAuth
 
-Keep credentials out of YAML. Existing single-provider settings use the
-`REACHMAX_*` names in `.env.example`. Per-mailbox SMTP credentials use the
-mailbox id in uppercase, for example `REACHMAX_MAILBOX_SALES_A_SMTP_PASSWORD`
-and `REACHMAX_MAILBOX_SALES_A_IMAP_PASSWORD`. Gmail and Microsoft OAuth tokens
-belong under `data/tokens/<mailbox-id>.json`; that directory is local data and
-must not be committed or exposed through the dashboard.
+Keep credentials out of YAML. SMTP/IMAP credentials use mailbox-specific
+`.env` names such as `REACHMAX_MAILBOX_SALES_A_SMTP_PASSWORD`; see
+`.env.example`. Gmail and Microsoft OAuth tokens are isolated at
+`data/tokens/<mailbox-id>.json`. Back up the database and token directory
+together. Neither secrets nor tokens are returned by the dashboard API.
 
-## Current implementation stage
+Use `reachmax gmail auth --mailbox sales_a` or
+`reachmax microsoft auth --mailbox sales_b` for OAuth. Existing single-sender
+commands still work without `--mailbox`.
 
-The local copy has the mailbox configuration model, legacy default-mailbox
-synthesis, database migration, and config-to-database sync. Provider
-instantiation, mailbox selection, per-mailbox eligibility, sending, reply
-routing, and dashboard controls are being implemented in subsequent phases.
-Until those phases land, configure and use Reach Max as a single-mailbox
-sender.
+## Commands and dashboard
+
+- `reachmax mailbox add` interactively adds a mailbox to the active YAML file.
+- `reachmax mailbox list` shows runtime state and daily sends.
+- `reachmax mailbox test <id>` checks the provider connection without sending
+  to a prospect.
+- `reachmax mailbox pause <id> [--reason ...]` and `resume <id>` control a
+  sender; `remove <id>` disables it in YAML while preserving history.
+- The dashboard Mailboxes tab shows health, capacity, send windows, and recent
+  events. Its mailbox selector filters mailbox-aware pipeline screens.
+
+Multi-mailbox cold sends are blocked until both
+`compliance.postal_address` and `compliance.opt_out_line` are configured.
+The dashboard shows the missing requirement. Reply handling remains global:
+replies and opt-outs stop company outreach regardless of receiving mailbox.
+
+OAuth against real accounts, provider-specific SMTP relay behavior, and live
+deliverability have not been exercised by the offline test suite. Run each
+mailbox connection test before enabling sending, then review every draft with
+the default approval ladder.

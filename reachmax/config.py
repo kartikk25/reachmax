@@ -212,8 +212,8 @@ class SendWindowConfig(BaseModel):
 
     @model_validator(mode="after")
     def _zone_required(self):
-        if self.timezone_mode in {"mailbox", "fixed"} and not self.timezone:
-            raise ValueError(f"send_window.timezone is required when timezone_mode is {self.timezone_mode}.")
+        if self.timezone_mode == "fixed" and not self.timezone:
+            raise ValueError("send_window.timezone is required when timezone_mode is fixed.")
         return self
 
 
@@ -283,6 +283,23 @@ class MailboxConfig(BaseModel):
         if not 0 <= value <= 1:
             raise ValueError("max_bounce_rate must be between 0 and 1.")
         return value
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_mailbox_timezone(cls, value):
+        value = (value or "").strip()
+        if value:
+            import pytz
+            if value not in pytz.all_timezones_set:
+                raise ValueError(f"timezone '{value}' is not a known IANA time zone.")
+        return value
+
+    @model_validator(mode="after")
+    def _mailbox_window_zone(self):
+        if (self.send_window and self.send_window.timezone_mode == "mailbox"
+                and not (self.send_window.timezone or self.timezone)):
+            raise ValueError(f"mailbox '{self.id}' needs a timezone for timezone_mode: mailbox.")
+        return self
 
 
 def send_window_of(config) -> "SendWindowConfig | None":
@@ -419,6 +436,11 @@ class EmailChannelConfig(BaseModel):
             for mailbox in self.mailboxes:
                 if mailbox.provider == "instantly":
                     raise ValueError(f"mailbox '{mailbox.id}' cannot use provider: instantly.")
+                window = mailbox.send_window or self.send_window
+                if (window and window.timezone_mode == "mailbox"
+                        and not (window.timezone or mailbox.timezone)):
+                    raise ValueError(
+                        f"mailbox '{mailbox.id}' needs a timezone for timezone_mode: mailbox.")
         return self
 
     @field_validator("warmup", mode="before")

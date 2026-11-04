@@ -225,6 +225,14 @@ def cmd_status(args):
             # Status must still print when reachmax.yaml is broken; that's
             # when people run it. The --check path reports config errors.
             notice = address_notice = ""
+        mailboxes = getattr(getattr(getattr(loaded, "channels", None), "email", None),
+                            "mailboxes", []) if loaded else []
+        if mailboxes:
+            for mailbox in mailboxes:
+                row = await state.get_mailbox(mailbox.id) or {}
+                sent = await state.count_mailbox_sent_today(mailbox.id)
+                print(f"  Mailbox {mailbox.id:<12} {row.get('status', 'unknown'):<9} "
+                      f"{sent}/{mailbox.max_daily_sends} sent today")
         from reachmax.main import unusable_backlog_notice
         backlog = unusable_backlog_notice(summary)
         if backlog:
@@ -522,6 +530,100 @@ def cmd_microsoft(args):
             print(f"\n  {'✓' if ok else '✗'} {detail}\n")
             sys.exit(0 if ok else 1)
         asyncio.run(_test())
+
+
+def cmd_mailbox(args):
+    """Inspect and control sender mailboxes without exposing credentials."""
+    from reachmax.config import load_config
+    from reachmax.mailboxes import MailboxRegistry
+    from reachmax.state import StateManager
+    import yaml
+
+    config = load_config()
+    registry = MailboxRegistry(config)
+    state = StateManager()
+
+    async def _run():
+        await state.init_db()
+        await registry.sync(state)
+        action = args.mailbox_action
+        if action == "list":
+            rows = {m["id"]: m for m in await state.get_mailboxes()}
+            print("\n  Mailboxes")
+            print("  " + "=" * 76)
+            for mailbox in registry.mailboxes:
+                row = rows.get(mailbox.id, {})
+                sent = await state.count_mailbox_sent_today(mailbox.id)
+                print(f"  {mailbox.id:<14} {mailbox.address:<30} {row.get('status', 'unknown'):<10} "
+                      f"{sent:>3}/{registry.effective_cap(mailbox.id):<3} today  {mailbox.provider}")
+                if row.get("paused_reason"):
+                    print(f"    {row['paused_reason']}")
+            print()
+            return
+        if action == "add":
+            values = {
+                "id": input("Mailbox id (short slug): ").strip(),
+                "label": input("Label: ").strip(),
+                "address": input("Sender email address: ").strip(),
+                "from_name": input("Real sender name: ").strip(),
+                "provider": input("Provider (gmail/microsoft/smtp): ").strip().lower(),
+                "max_daily_sends": int(input("Daily cap [40]: ").strip() or "40"),
+            }
+            from reachmax.config import MailboxConfig
+            mailbox = MailboxConfig(**values)
+            if any(existing.id == mailbox.id for existing in registry.mailboxes):
+                raise ValueError(f"mailbox id '{mailbox.id}' already exists")
+            if any(existing.address == mailbox.address for existing in registry.mailboxes):
+                raise ValueError(f"sender address '{mailbox.address}' is already configured")
+            if mailbox.id == "default" and not config.channels.email.mailboxes:
+                raise ValueError("'default' is reserved for the legacy single-mailbox configuration")
+            source = Path(config._source_path or "reachmax.yaml")
+            document = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+            email_config = document.setdefault("channels", {}).setdefault("email", {})
+            mailboxes = email_config.setdefault("mailboxes", [])
+            if any(entry.get("id") == mailbox.id for entry in mailboxes):
+                raise ValueError(f"mailbox id '{mailbox.id}' already exists")
+            mailboxes.append(mailbox.model_dump(mode="json", exclude_none=True))
+            source.write_text(yaml.safe_dump(document, sort_keys=False, allow_unicode=True),
+                              encoding="utf-8")
+            await state.sync_mailboxes([*registry.mailboxes, mailbox])
+            print(f"\n  Added {mailbox.id}. Configure secrets in .env using REACHMAX_MAILBOX_"
+                  f"{mailbox.id.upper()}_... variables.\n")
+            return
+        mailbox_id = getattr(args, "mailbox_id", "")
+        mailbox = registry.get(mailbox_id)
+        if not mailbox:
+            print(f"  Unknown mailbox '{mailbox_id}'. Run `reachmax mailbox list`.")
+            raise SystemExit(2)
+        if action == "pause":
+            changed = await state.set_mailbox_status(mailbox_id, "paused",
+                                                       args.reason or "Paused from CLI")
+            print(f"  {mailbox_id}: {'paused' if changed else 'disabled'}")
+        elif action == "resume":
+            changed = await state.set_mailbox_status(mailbox_id, "active")
+            print(f"  {mailbox_id}: {'active' if changed else 'disabled'}")
+        elif action == "remove":
+            source = Path(config._source_path or "reachmax.yaml")
+            document = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+            pool = document.get("channels", {}).get("email", {}).get("mailboxes", [])
+            for entry in pool:
+                if entry.get("id") == mailbox_id:
+                    entry["enabled"] = False
+            source.write_text(yaml.safe_dump(document, sort_keys=False, allow_unicode=True),
+                              encoding="utf-8")
+            await state.disable_mailbox(mailbox_id)
+            print(f"  {mailbox_id}: disabled in configuration; history retained")
+        elif action == "test":
+            provider = registry.provider(mailbox_id)
+            if not provider:
+                print(f"  {mailbox_id}: provider unavailable")
+                raise SystemExit(1)
+            ok, detail = await provider.test_connection()
+            print(f"  {'✓' if ok else '✗'} {mailbox_id}: {detail}")
+            if not ok:
+                raise SystemExit(1)
+
+    asyncio.run(_run())
 
 
 def cmd_outbox(args):
@@ -1094,6 +1196,17 @@ def main():
                      help="auth: one-time sign-in; test: verify connection")
     sub.add_argument("--mailbox", default=None, help="Mailbox id from channels.email.mailboxes")
     sub.set_defaults(func=cmd_microsoft)
+
+    mailbox = subparsers.add_parser("mailbox", help="Manage native sending mailboxes")
+    mailbox_actions = mailbox.add_subparsers(dest="mailbox_action", required=True)
+    mailbox_actions.add_parser("list", help="List mailbox status and daily usage")
+    mailbox_actions.add_parser("add", help="Interactively add a mailbox to YAML")
+    for action in ("test", "pause", "resume", "remove"):
+        command = mailbox_actions.add_parser(action, help=f"{action.capitalize()} a mailbox")
+        command.add_argument("mailbox_id")
+        if action == "pause":
+            command.add_argument("--reason", default="", help="Reason shown in status and dashboard")
+    mailbox.set_defaults(func=cmd_mailbox)
 
     # reachmax outbox
     sub = subparsers.add_parser("outbox", help="Review/approve queued emails")

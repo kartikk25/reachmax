@@ -210,13 +210,24 @@ class Sender:
         window = send_window_of(self.config)
         if window is None or not self.is_native:
             return False
-        if not self.provider.is_configured() or await self.state.get_setting(KILL_SWITCH_KEY):
+        if self.mailbox_registry:
+            configured = any(
+                (provider := self.mailbox_registry.provider(m.id)) is not None
+                and provider.is_configured()
+                for m in self.mailbox_registry.mailboxes if m.enabled)
+        else:
+            configured = self.provider.is_configured()
+        if not configured or await self.state.get_setting(KILL_SWITCH_KEY):
             return False
         email = self.config.channels.email
-        if email.max_daily_sends - await self.state.count_outbox_sent_today() <= 0:
+        max_daily = (sum(m.max_daily_sends for m in self.mailbox_registry.mailboxes)
+                     if self.mailbox_registry else email.max_daily_sends)
+        if max_daily - await self.state.count_outbox_sent_today() <= 0:
             return False
         midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-        if cold_daily_cap(email) - await self.state.count_outbox_sent_today(
+        cold_cap = (sum(self.mailbox_registry.effective_cap(m.id) for m in self.mailbox_registry.mailboxes)
+                    if self.mailbox_registry else cold_daily_cap(email))
+        if cold_cap - await self.state.count_outbox_sent_today(
                 kind="sequence",
                 since=midnight.astimezone(timezone.utc).replace(tzinfo=None).isoformat()) <= 0:
             return False
@@ -764,6 +775,8 @@ class Sender:
         await sync_sending_mode(self.config, self.state)   # "Turn off autopilot" counts at once
         if prospect is None:
             return "failed", "prospect missing"
+        if self.mailbox_registry and self.config.channels.email.signature.logo:
+            return "failed", "multi-mailbox sending requires plain text; disable channels.email.signature.logo"
         if item["kind"] == "sequence":
             if self.mailbox_registry:
                 compliance = compliance_of(self.config)
@@ -944,12 +957,17 @@ class Sender:
                         last_sent[mid] = datetime.fromisoformat(last) if last else None
                     except (TypeError, ValueError):
                         last_sent[mid] = None
+                    cooldown = None
+                    try:
+                        cooldown = datetime.fromisoformat(row.get("cooldown_until")) if row.get("cooldown_until") else None
+                    except (TypeError, ValueError):
+                        pass
                     if not prospect.timezone:
                         prospect.timezone = await self._zone_or_default(prospect)
                     if self.mailbox_registry.eligible(
                             mid, now_dt, prospect, status=row.get("status", "active"),
                             sent_today=counts[mid], last_sent_at=last_sent[mid],
-                            kind=item["kind"]):
+                            kind=item["kind"], cooldown_until=cooldown):
                         eligible_ids.append(mid)
                 if not mailbox_id:
                     mailbox_id = await self.mailbox_registry.assign(
@@ -1117,6 +1135,13 @@ class Sender:
                 await self.state.update_outbox_item(
                     item["id"], status="failed", error=result.error[:300]
                 )
+                if self.mailbox_registry and mailbox_id:
+                    lower_error = result.error.lower()
+                    if any(marker in lower_error for marker in ("401", "unauthorized", "invalid_grant", "auth failed")):
+                        await self.state.set_mailbox_error(mailbox_id, result.error)
+                    elif any(marker in lower_error for marker in ("429", "rate limit", "too many requests")):
+                        cooldown_until = (_utcnow() + timedelta(minutes=15)).isoformat()
+                        await self.state.set_mailbox_cooldown(mailbox_id, cooldown_until, result.error)
                 continue
 
             sent += 1

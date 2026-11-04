@@ -106,6 +106,7 @@ channels:
       end: "17:00"
       weekdays_only: true
       recipient_timezone: true  # false: one zone for everyone (quiet_hours.timezone)
+      timezone_mode: recipient # recipient | mailbox | fixed
     # A logo under every email, cold or reply: the email goes out as HTML
     # with the image embedded. Blank logo = plain text, as before. If the
     # file can't be used, approved email waits instead of going out without

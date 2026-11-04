@@ -185,6 +185,25 @@ def test_registry_eligibility_enforces_status_cap_gap_and_window():
     assert not registry.eligible("sales_a", now, recipient,
                                  last_sent_at=now - timedelta(seconds=119))
     assert not registry.eligible("sales_a", now - timedelta(minutes=1), recipient)
+    assert registry.eligible("sales_a", datetime(2026, 1, 5, 21, 59), recipient)
+    assert not registry.eligible("sales_a", datetime(2026, 1, 5, 22, 0), recipient)
+
+
+def test_mailbox_and_fixed_timezone_modes():
+    from reachmax.config import SendWindowConfig
+
+    config = load_config("reachmax.yaml")
+    config.channels.email.send_window.timezone_mode = "mailbox"
+    config.channels.email.mailboxes = [
+        MailboxConfig(**mailbox(id="sales_a", timezone="America/Los_Angeles")),
+        MailboxConfig(**mailbox(id="sales_b", address="sam@example.com",
+                                send_window=SendWindowConfig(
+                                    start="06:00", end="16:00", timezone_mode="fixed",
+                                    timezone="Europe/Paris"))),
+    ]
+    registry = MailboxRegistry(config)
+    assert registry.timezone_for("sales_a") == "America/Los_Angeles"
+    assert registry.timezone_for("sales_b") == "Europe/Paris"
 
 
 @pytest.mark.asyncio
