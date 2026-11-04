@@ -2,7 +2,7 @@ import aiosqlite
 import pytest
 from pydantic import ValidationError
 
-from reachmax.config import EmailChannelConfig, MailboxConfig, load_config
+from reachmax.config import EmailChannelConfig, EnvConfig, MailboxConfig, load_config
 from reachmax.mailboxes import MailboxRegistry, configured_mailboxes, mailbox_token_path
 from reachmax.state import MIGRATIONS, StateManager
 from reachmax.models.company import Company
@@ -217,3 +217,41 @@ async def test_global_cold_send_slot_persists_across_reservations(tmp_path):
     assert await state.reserve_global_send_slot(11, now)
     assert not await state.reserve_global_send_slot(11, now + timedelta(seconds=10))
     assert await state.reserve_global_send_slot(11, now + timedelta(seconds=11))
+
+
+@pytest.mark.asyncio
+async def test_handler_polls_each_configured_mailbox(tmp_path):
+    from reachmax.agents.handler import Handler
+
+    class Provider:
+        name = "fake"
+        def __init__(self): self.reads = 0; self.confirmed = 0
+        def is_configured(self): return True
+        async def get_replies(self): self.reads += 1; return []
+        def confirm_read(self): self.confirmed += 1
+
+    config = load_config("reachmax.yaml")
+    config.channels.email.mailboxes = [MailboxConfig(**mailbox(id="sales_a")),
+                                       MailboxConfig(**mailbox(id="sales_b", address="sam@example.com"))]
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    handler = Handler(None, state, config, EnvConfig())
+    providers = {mid: Provider() for mid in ("sales_a", "sales_b")}
+    handler.mailbox_registry.provider = lambda mid: providers[mid]
+    assert await handler._run_native()
+    assert all(provider.reads == 1 and provider.confirmed == 1 for provider in providers.values())
+
+
+@pytest.mark.asyncio
+async def test_bounce_threshold_pauses_only_that_mailbox(tmp_path):
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    await state.sync_mailboxes([MailboxConfig(**mailbox(id="sales_a")),
+                                MailboxConfig(**mailbox(id="sales_b", address="sam@example.com"))])
+    for _ in range(20):
+        await state.record_mailbox_event("sales_a", "sent")
+        await state.record_mailbox_event("sales_b", "sent")
+    sent, bounces, paused = await state.record_mailbox_bounce("sales_a", 0.03, 100, 20)
+    assert (sent, bounces, paused) == (20, 1, True)
+    assert (await state.get_mailbox("sales_a"))["status"] == "paused"
+    assert (await state.get_mailbox("sales_b"))["status"] == "active"

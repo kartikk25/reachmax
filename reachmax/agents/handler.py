@@ -24,6 +24,7 @@ from reachmax.integrations.instantly import InstantlyClient
 from reachmax.integrations.mail_provider import (
     NATIVE_PROVIDERS, get_mail_provider, strip_quoted_reply,
 )
+from reachmax.mailboxes import MailboxRegistry
 from reachmax.models.conversation import Conversation, Message
 from reachmax.state import COLLEAGUE_REPLIED, REVIEW_NEXT_REPLY_KEY, StateManager
 from reachmax.sending_mode import sync_sending_mode
@@ -527,6 +528,11 @@ class Handler:
         self.config = config
         self.instantly = InstantlyClient(env.instantly_api_key)
         self.provider = get_mail_provider(config, env)
+        email_config = getattr(getattr(config, "channels", None), "email", None)
+        self.mailbox_registry = (MailboxRegistry(config, env)
+                                 if getattr(email_config, "mailboxes", None) else None)
+        self._active_provider = self.provider
+        self._active_mailbox_id = ""
         self.skills = ""
         self.last_read_problem = ""   # why the last mailbox read failed, for the heartbeat
 
@@ -991,65 +997,75 @@ class Handler:
     async def _run_native(self) -> bool:
         """Poll the mailbox, split bounces from human replies, handle both.
         Returns True only if the mailbox was read and every message handled."""
-        if not self.provider.is_configured():
+        providers = []
+        if self.mailbox_registry:
+            await self.mailbox_registry.sync(self.state)
+            for mailbox in self.mailbox_registry.mailboxes:
+                runtime = await self.state.get_mailbox(mailbox.id)
+                if not mailbox.enabled or not runtime or runtime.get("status") in {"disabled", "error"}:
+                    continue
+                provider = self.mailbox_registry.provider(mailbox.id)
+                if provider and provider.is_configured():
+                    providers.append((mailbox.id, provider))
+        elif self.provider:
+            providers.append(("", self.provider))
+        if not providers:
             logger.debug(
-                f"Handler: provider '{self.provider.name}' not configured yet."
+                "Handler: no configured native mailbox is ready to poll."
             )
             return True  # nothing to read; the sender can't send through it either
 
         self.last_read_problem = ""
-        try:
-            inbound = await self.provider.get_replies()
-        except Exception as e:
-            logger.error(f"Handler: fetching replies failed: {e}")
-            # Kept for the heartbeat: sending is held, and Today says why.
-            self.last_read_problem = f"{self.provider.name}: {e}"
-            return False
-
         handled = 0
         complete = True
-        for msg in inbound:
-            dedup_key = msg.provider_id or msg.message_id
-            if not dedup_key or await self.state.is_reply_processed(dedup_key):
-                continue
-            consumed = True
+        for mailbox_id, provider in providers:
+            self._active_provider = provider
+            self._active_mailbox_id = mailbox_id
             try:
-                if msg.is_bounce:
-                    await self._handle_bounce(msg)
-                elif msg.body.strip():
-                    await self._process_reply(
-                        msg.from_email,
-                        msg.body.strip(),
-                        reply_uuid="",
-                        reply_meta={
-                            "thread_ref": msg.thread_ref,
-                            "message_id": msg.message_id,
-                            "subject": msg.subject,
-                        },
-                    )
-                handled += 1
-            except BrainUnavailable as e:
-                consumed = False
-                complete = False
-                logger.error(f"Handler: stopping; replies are left for later ({e}).")
-                break
+                inbound = await provider.get_replies()
             except Exception as e:
-                logger.error(f"Handler: error processing {msg.from_email}: {e}")
-                self.last_read_problem = f"a reply from {msg.from_email} couldn't be handled ({e})"
+                logger.error(f"Handler: fetching replies failed for {mailbox_id or provider.name}: {e}")
+                self.last_read_problem = f"{mailbox_id or provider.name}: {e}"
+                if mailbox_id and any(mark in str(e).lower() for mark in
+                                      ("401", "unauthorized", "invalid_grant", "auth")):
+                    await self.state.set_mailbox_error(mailbox_id, str(e)[:300])
                 complete = False
-            finally:
-                if consumed:
-                    await self.state.mark_reply_processed(dedup_key)
+                continue
+            mailbox_complete = True
+            for msg in inbound:
+                dedup_key = msg.provider_id or msg.message_id
+                if not dedup_key or await self.state.is_reply_processed(dedup_key):
+                    continue
+                consumed = True
+                try:
+                    if msg.is_bounce:
+                        await self._handle_bounce(msg)
+                    elif msg.body.strip():
+                        await self._process_reply(
+                            msg.from_email, msg.body.strip(), reply_uuid="",
+                            reply_meta={"thread_ref": msg.thread_ref,
+                                        "message_id": msg.message_id,
+                                        "subject": msg.subject})
+                    handled += 1
+                except BrainUnavailable as e:
+                    consumed = False
+                    mailbox_complete = complete = False
+                    logger.error(f"Handler: stopping; replies are left for later ({e}).")
+                    break
+                except Exception as e:
+                    logger.error(f"Handler: error processing {msg.from_email}: {e}")
+                    self.last_read_problem = f"a reply from {msg.from_email} couldn't be handled ({e})"
+                    mailbox_complete = complete = False
+                finally:
+                    if consumed:
+                        await self.state.mark_reply_processed(dedup_key)
+            if mailbox_complete:
+                provider.confirm_read()
 
         if handled:
             logger.info(f"Handler: processed {handled} inbound message(s).")
         else:
             logger.info("Handler: no new replies.")
-        if complete:
-            # Every reply read was handled: the provider may start its next
-            # read after these (Gmail's history marker). Not otherwise, so
-            # what wasn't handled is read again.
-            self.provider.confirm_read()
         return complete
 
     async def _handle_bounce(self, msg):
@@ -1058,6 +1074,8 @@ class Handler:
         prospect = None
         if outbox_item:
             prospect = await self.state.get_prospect(outbox_item["prospect_id"])
+        mailbox_id = ((outbox_item or {}).get("mailbox_id")
+                      or self._active_mailbox_id)
 
         if prospect:
             await self.state.update_prospect_email(
@@ -1075,6 +1093,17 @@ class Handler:
                 f"Handler: bounce received ({msg.subject[:60]}) but couldn't "
                 "match it to a sent email."
             )
+
+        if mailbox_id and self.mailbox_registry:
+            mailbox = self.mailbox_registry.get(mailbox_id)
+            if mailbox:
+                sent, bounces, paused = await self.state.record_mailbox_bounce(
+                    mailbox_id, mailbox.max_bounce_rate,
+                    self.config.channels.email.bounce_window_sends, min_sends=20)
+                if paused:
+                    logger.error(
+                        f"Handler: paused mailbox {mailbox_id}; bounce rate "
+                        f"{bounces}/{sent} exceeded its limit.")
 
         bounces = await self.state.increment_setting(BOUNCE_COUNT_KEY)
         total_sent = await self.state.count_outbox_sent()
@@ -1115,6 +1144,11 @@ class Handler:
         if subject and not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
 
+        reply_mailbox_id = (getattr(prospect, "mailbox_id", None)
+                            or self._active_mailbox_id or None)
+        reply_provider = self._active_provider
+        if self.mailbox_registry and reply_mailbox_id:
+            reply_provider = self.mailbox_registry.provider(reply_mailbox_id)
         item_id = await self.state.add_outbox_item(
             prospect_id=prospect.id,
             conversation_id=convo.id,
@@ -1124,10 +1158,11 @@ class Handler:
             body=response,
             send_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             status="pending_review" if require_approval else "approved",
-            provider=self.provider.name if self.provider else "",
+            provider=(reply_provider.name if reply_provider else ""),
             thread_ref=reply_meta.get("thread_ref", ""),
             in_reply_to=reply_meta.get("message_id", ""),
             approved_by="" if require_approval else "autopilot",
+            mailbox_id=reply_mailbox_id,
         )
         if item_id:
             await self.state.delete_setting(review_key)

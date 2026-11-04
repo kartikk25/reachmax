@@ -786,6 +786,50 @@ class StateManager:
                 (str(uuid.uuid4()), mailbox_id))
             await db.commit()
 
+    async def record_mailbox_bounce(self, mailbox_id: str, max_rate: float,
+                                    window_sends: int = 100,
+                                    min_sends: int = 20) -> tuple[int, int, bool]:
+        """Record a bounce and pause only this sender above its rolling rate."""
+        await self.record_mailbox_event(mailbox_id, "bounce")
+        async with self._connect() as db:
+            async with db.execute(
+                "SELECT kind FROM mailbox_events WHERE mailbox_id=? "
+                "AND kind IN ('sent','bounce') ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (mailbox_id, max(1, int(window_sends)) + 100)) as cursor:
+                kinds = [row[0] for row in await cursor.fetchall()]
+            sent = 0
+            bounces = 0
+            for kind in kinds:
+                if kind == "sent":
+                    sent += 1
+                    if sent >= max(1, int(window_sends)):
+                        break
+                elif sent < max(1, int(window_sends)):
+                    bounces += 1
+            exceeded = sent >= min_sends and max_rate > 0 and bounces / max(sent, 1) > max_rate
+            if exceeded:
+                reason = f"bounce rate {bounces}/{sent} exceeded {max_rate:.0%}"
+                await db.execute(
+                    "UPDATE mailboxes SET status='paused', paused_reason=?, paused_at=CURRENT_TIMESTAMP, "
+                    "paused_by='system', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (reason, mailbox_id))
+                await db.execute(
+                    "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, 'paused', ?)",
+                    (str(uuid.uuid4()), mailbox_id, reason))
+            await db.commit()
+            return sent, bounces, exceeded
+
+    async def set_mailbox_error(self, mailbox_id: str, reason: str) -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "UPDATE mailboxes SET status='error', paused_reason=?, last_error=?, "
+                "last_error_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (reason[:300], reason[:300], mailbox_id))
+            await db.execute(
+                "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, 'auth_error', ?)",
+                (str(uuid.uuid4()), mailbox_id, reason[:300]))
+            await db.commit()
+
     # ── Companies ──
 
     @staticmethod
