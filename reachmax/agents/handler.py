@@ -685,6 +685,7 @@ class Handler:
             prospect_id=prospect.id,
             campaign_id=campaign_id,
             channel="email",
+            mailbox_id=(getattr(prospect, "mailbox_id", None) or self._active_mailbox_id or None),
             thread=[Message(sender="prospect", content=reply_text)],
             intent="escalate" if escalate else "unsubscribe",
             stage="closed_lost",
@@ -791,6 +792,7 @@ class Handler:
                 prospect_id=prospect.id,
                 campaign_id=campaign_id,
                 channel="email",
+                mailbox_id=(getattr(prospect, "mailbox_id", None) or self._active_mailbox_id or None),
                 intent=intent,
                 status="open",
             )
@@ -1111,7 +1113,8 @@ class Handler:
             action_type="bounce",
             agent="handler",
             details={"prospect": prospect.email if prospect else "unknown",
-                     "bounces": bounces, "total_sent": total_sent},
+                     "bounces": bounces, "total_sent": total_sent,
+                     **({"mailbox_id": mailbox_id} if mailbox_id else {})},
         )
 
         max_rate = getattr(self.config.channels.email, "max_bounce_rate", 0.05)
@@ -1172,7 +1175,8 @@ class Handler:
                 action_type="reply_queued",
                 agent="handler",
                 details={"prospect_email": prospect.email, "intent": intent,
-                         "response_preview": response[:100]},
+                         "response_preview": response[:100],
+                         **({"mailbox_id": reply_mailbox_id} if reply_mailbox_id else {})},
             )
 
     def _instantly_reply_held(self, prospect, response: str) -> list[str]:

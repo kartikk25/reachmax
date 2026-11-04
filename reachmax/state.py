@@ -2646,13 +2646,13 @@ class StateManager:
             await db.execute(
                 """INSERT INTO conversations
                    (id, prospect_id, campaign_id, channel, thread_json,
-                    intent, stage, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    intent, stage, status, created_at, updated_at, mailbox_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     convo.id, convo.prospect_id, convo.campaign_id,
                     convo.channel, convo.thread_json(), convo.intent,
                     convo.stage, convo.status, convo.created_at.isoformat(),
-                    convo.updated_at.isoformat(),
+                    convo.updated_at.isoformat(), convo.mailbox_id,
                 ),
             )
             await db.commit()
@@ -2703,10 +2703,11 @@ class StateManager:
     # ── Actions Log ──
 
     async def log_action(self, action_type: str, agent: str, details: dict | None = None):
+        mailbox_id = (details or {}).get("mailbox_id")
         async with self._connect() as db:
             await db.execute(
-                "INSERT INTO actions (id, action_type, agent, details_json) VALUES (?, ?, ?, ?)",
-                (_new_id(), action_type, agent, json.dumps(details or {})),
+                "INSERT INTO actions (id, action_type, agent, details_json, mailbox_id) VALUES (?, ?, ?, ?, ?)",
+                (_new_id(), action_type, agent, json.dumps(details or {}), mailbox_id),
             )
             await db.commit()
 

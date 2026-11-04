@@ -31,6 +31,7 @@ minor versions can still change behaviour.
 - Shipped `skills/email_rules.md` as the default Reach Max writing guidance, updated the writer's first-email shape to the personal pain-point-first style, and hard-blocked multi-mailbox cold sends without both the physical postal address and opt-out line.
 - Added CLI mailbox management, mailbox-specific environment examples, completed the multi-mailbox guide/README, validated mailbox/fixed timezone selection, and added per-mailbox authentication errors and rate-limit cooldowns. `pip install -e .`, CLI help/list, JavaScript syntax, and Python compilation pass; Docker verification is unavailable because Docker is not installed in this environment.
 - Final test run on Python 3.14: 2,829 passed, 184 skipped.
+- Follow-up fix: persist mailbox ids on new conversations and mailbox-related handler actions so dashboard filtering includes those records; focused regression run: 80 passed.
 
 ### Added
 
