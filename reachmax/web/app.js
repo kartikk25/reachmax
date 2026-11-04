@@ -448,11 +448,13 @@ async function loadMailboxes() {
     ).join('');
     filter.value = current;
   }
+  const complianceBlock = data.cold_send_block_reason
+    ? '<div class="card" role="alert"><b>Cold sending is blocked.</b> ' + escHtml(data.cold_send_block_reason) + '</div>' : '';
   if (!rows.length) {
     el.innerHTML = emptyState(icon('settings'), 'No mailboxes configured',
       'Add one or more entries under <code>channels.email.mailboxes</code> in <code>reachmax.yaml</code>.');
   } else {
-    el.innerHTML = '<div class="table-card"><table class="nowrap"><thead><tr><th>Mailbox</th><th>Provider</th><th>Status</th><th>Sent today</th><th>Daily cap</th><th>Window</th><th>Last sent</th><th></th></tr></thead><tbody>' +
+    el.innerHTML = complianceBlock + '<div class="table-card"><table class="nowrap"><thead><tr><th>Mailbox</th><th>Provider</th><th>Status</th><th>Sent today</th><th>Daily cap</th><th>Window</th><th>Last sent</th><th></th></tr></thead><tbody>' +
       rows.map(m => '<tr><td><b>' + escHtml(m.label) + '</b><br><span class="muted">' + escHtml(m.address) + '</span>' +
         (m.paused_reason ? '<br><span class="muted">' + escHtml(m.paused_reason) + '</span>' : '') + '</td><td>' + escHtml(m.provider) + '</td>' +
         '<td>' + escHtml(m.status) + '</td><td>' + m.sent_today + '</td><td>' + m.effective_daily_cap + ' / ' + m.max_daily_sends + '</td>' +

@@ -55,6 +55,9 @@ def test_legacy_email_config_synthesizes_one_default_mailbox():
         "default", config.channels.email.provider, config.persona.email)
     assert senders[0].from_name == config.persona.name
     assert senders[0].max_daily_sends == config.channels.email.max_daily_sends
+    assert config.writer.email_rules == "skills/email_rules.md"
+    from reachmax.config import load_email_rules
+    assert "specific pain point" in load_email_rules(config)
 
 
 @pytest.mark.asyncio
@@ -255,3 +258,25 @@ async def test_bounce_threshold_pauses_only_that_mailbox(tmp_path):
     assert (sent, bounces, paused) == (20, 1, True)
     assert (await state.get_mailbox("sales_a"))["status"] == "paused"
     assert (await state.get_mailbox("sales_b"))["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_multi_mailbox_cold_send_requires_both_compliance_fields(tmp_path):
+    from reachmax.agents.sender import Sender
+    from reachmax.config import EnvConfig
+    from reachmax.models.prospect import Prospect
+
+    config = load_config("reachmax.yaml")
+    config.channels.email.mailboxes = [MailboxConfig(**mailbox())]
+    config.compliance.postal_address = ""
+    config.compliance.opt_out_line = ""
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    sender = Sender(None, state, config, EnvConfig())
+    prospect = Prospect(id="p", email="alex@example.com", email_status="verified")
+    status, reason = await sender._blocked(
+        {"kind": "sequence", "step": 1, "to_email": "alex@example.com",
+         "subject": "hello", "body": "Hi"}, prospect, False)
+    assert status == "failed"
+    assert "compliance.postal_address" in reason
+    assert "compliance.opt_out_line" in reason

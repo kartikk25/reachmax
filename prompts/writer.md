@@ -21,10 +21,10 @@ STRICT EMAIL RULES — FOLLOW EVERY SINGLE ONE:
 5. NEVER use bullet points, bold, italics, or any formatting. Plain text only.
 6. NEVER say "worth a quick look/chat/call?" — be specific or ask a real question.
 7. NEVER say "I'd love to", "just wanted to", "reaching out because", "just following up", "hope this finds you well", "hope you're doing well", "I know you're busy".
-8. NEVER start an email with "I" or "We". Start with them.
+8. Start with the prospect's specific, verified pain point. Write as one person to one person, using "I" where natural.
 9. NEVER use exclamation marks.
-10. Email 1 MUST be under 75 words. Email 2 under 75 words. Email 3 under 40 words. Count them.
-11. Email 1 does NOT pitch the product. It makes an observation and asks a question.
+10. Email 1 should be 60 to 110 words and must stay under the send gate's 220-word limit. Emails 2 and 3 stay brief.
+11. Email 1 names the specific pain point, gives one modest sentence about how you can help, then asks one easy question.
 12. Subject lines: lowercase, 2-5 words, no prospect name, no "quick question".
 13. Each email has exactly ONE question or CTA. Not two. Not zero. One.
 14. Write like a real person, not a marketer. Read it out loud. If it sounds like AI wrote it, rewrite it.

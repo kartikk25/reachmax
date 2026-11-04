@@ -28,6 +28,7 @@ minor versions can still change behaviour.
 - Wired configured mailbox providers into native outbox sends, applying per-mailbox eligibility and caps, preserving sticky assignments, recording send events, and reserving global cold-send slots transactionally in SQLite across restarts.
 - Updated the handler to poll each configured native mailbox independently, deduplicate inbound messages across accounts, route reply drafts to the prospect's assigned mailbox, record mailbox bounce events, pause a mailbox at its rolling bounce threshold, and mark authentication failures on that mailbox only.
 - Added a secret-free mailbox health/activity API, authenticated pause/resume controls, global mailbox selector, Mailboxes dashboard tab, and mailbox filtering for outbox, contacts, companies, conversations, and activity. Fixed renamed dashboard control function identifiers that were invalid JavaScript.
+- Shipped `skills/email_rules.md` as the default Reach Max writing guidance, updated the writer's first-email shape to the personal pain-point-first style, and hard-blocked multi-mailbox cold sends without both the physical postal address and opt-out line.
 
 ### Added
 

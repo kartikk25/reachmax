@@ -1148,7 +1148,15 @@ async def list_mailboxes():
     events = await query_db(
         "SELECT mailbox_id, kind, detail, created_at FROM mailbox_events "
         "ORDER BY created_at DESC LIMIT 100")
-    return {"mailboxes": result, "events": events}
+    from reachmax.config import compliance_of
+    compliance = compliance_of(config)
+    missing_compliance = []
+    if not compliance.postal_address.strip():
+        missing_compliance.append("Set compliance.postal_address to enable cold email.")
+    if not compliance.opt_out_line.strip():
+        missing_compliance.append("Set compliance.opt_out_line to enable cold email.")
+    return {"mailboxes": result, "events": events,
+            "cold_send_block_reason": " ".join(missing_compliance)}
 
 
 @app.post("/api/mailboxes/{mailbox_id}/pause")

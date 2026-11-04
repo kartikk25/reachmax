@@ -809,7 +809,8 @@ class WriterConfig(BaseModel):
     # length, structure, what to say about the product, links, subject lines,
     # sign-off. When set, it replaces the Writer's built-in shape (email 1
     # under 75 words, an observation and a question, no pitch). A path
-    # relative to the Reach Max folder; skills/email_rules.md is gitignored.
+    # relative to the Reach Max folder. The shipped Reach Max config uses
+    # skills/email_rules.md as its default personal-email shape.
     # The FACTS rule, the send gate and do-not-contact still apply. A file
     # that is set but can't be read stops writing until it's fixed.
     email_rules: str = ""

@@ -765,6 +765,15 @@ class Sender:
         if prospect is None:
             return "failed", "prospect missing"
         if item["kind"] == "sequence":
+            if self.mailbox_registry:
+                compliance = compliance_of(self.config)
+                missing = []
+                if not compliance.postal_address.strip():
+                    missing.append("compliance.postal_address is required for multi-mailbox cold email")
+                if not compliance.opt_out_line.strip():
+                    missing.append("compliance.opt_out_line is required for multi-mailbox cold email")
+                if missing:
+                    return "failed", "; ".join(missing)
             # Stop-on-reply / opt-out: never continue a sequence after contact.
             if prospect.status in STOP_STATUSES:
                 return "cancelled", f"prospect status '{prospect.status}'"
