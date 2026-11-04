@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from harvey.agents.sender import Sender
+from reachmax.agents.sender import Sender
 
 
 def _render(text, company):

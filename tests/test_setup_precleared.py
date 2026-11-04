@@ -1,7 +1,7 @@
-"""Tests for the optional Precleared step in `harvey setup`: off unless the
+"""Tests for the optional Precleared step in `reachmax setup`: off unless the
 user says yes, saved answers are the defaults when setup is re-run, the key is
 read with hidden input and never printed, and other settings are kept. No
-network: the step only writes harvey.yaml and .env."""
+network: the step only writes reachmax.yaml and .env."""
 
 import os
 import shutil
@@ -10,23 +10,23 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-import harvey.setup as setup
-from harvey.config import load_config
-from harvey.integrations.precleared import PreclearedClient
-from harvey.paths import PROJECT_ROOT
+import reachmax.setup as setup
+from reachmax.config import load_config
+from reachmax.integrations.precleared import PreclearedClient
+from reachmax.paths import PROJECT_ROOT
 
 FAKE_KEY = "pc_live_example_not_a_real_key"
 
 
 @pytest.fixture
 def files(tmp_path, monkeypatch):
-    """A copy of the shipped harvey.yaml and an empty .env, in a temp folder."""
-    config = tmp_path / "harvey.yaml"
-    shutil.copy(PROJECT_ROOT / "harvey.yaml", config)
+    """A copy of the shipped reachmax.yaml and an empty .env, in a temp folder."""
+    config = tmp_path / "reachmax.yaml"
+    shutil.copy(PROJECT_ROOT / "reachmax.yaml", config)
     env = tmp_path / ".env"
     monkeypatch.setattr(setup, "CONFIG_FILE", config)
     monkeypatch.setattr(setup, "ENV_FILE", env)
-    monkeypatch.delenv("PRECLEARED_API_KEY", raising=False)
+    monkeypatch.delenv("REACHMAX_PRECLEARED_API_KEY", raising=False)
     return SimpleNamespace(config=config, env=env)
 
 
@@ -63,7 +63,7 @@ def saved(path) -> dict:
 
 
 def finish(wizard):
-    """Write .env and harvey.yaml the way the end of `harvey setup` does."""
+    """Write .env and reachmax.yaml the way the end of `reachmax setup` does."""
     if not wizard.config:
         wizard.config = {"channels": {"email": {"max_daily_sends": 50}}}
     wizard._write_env()
@@ -80,7 +80,7 @@ def test_check_stays_off_unless_the_user_says_yes(files, monkeypatch):
     assert asked.questions == []  # no country or key questions after a no
     assert wizard.precleared is None
     assert saved(files.config)["enabled"] is False
-    assert "PRECLEARED_API_KEY" not in files.env.read_text()
+    assert "REACHMAX_PRECLEARED_API_KEY" not in files.env.read_text()
 
 
 def test_yes_saves_the_settings_and_a_free_key(files, monkeypatch, capsys):
@@ -98,7 +98,7 @@ def test_yes_saves_the_settings_and_a_free_key(files, monkeypatch, capsys):
         "address_source": "unknown",
         "prospect_country": "US",
     }
-    assert f"PRECLEARED_API_KEY={FAKE_KEY}" in files.env.read_text().splitlines()
+    assert f"REACHMAX_PRECLEARED_API_KEY={FAKE_KEY}" in files.env.read_text().splitlines()
     assert FAKE_KEY not in capsys.readouterr().out
 
     # The saved config loads and switches the check on.
@@ -109,7 +109,7 @@ def test_yes_saves_the_settings_and_a_free_key(files, monkeypatch, capsys):
 
 def test_rerunning_setup_keeps_a_check_that_is_on(files, monkeypatch):
     set_precleared(files.config, enabled=True, sender_country="GB", prospect_country="US")
-    files.env.write_text("PRECLEARED_API_KEY=existing_key\n")
+    files.env.write_text("REACHMAX_PRECLEARED_API_KEY=existing_key\n")
     asked = script(monkeypatch, yes_no=[None], answers=["", "", ""])
     wizard = setup.SetupWizard()
     wizard._setup_compliance()
@@ -121,7 +121,7 @@ def test_rerunning_setup_keeps_a_check_that_is_on(files, monkeypatch):
     assert "Enter keeps your current key" in asked.questions[2].prompt
     assert saved(files.config)["enabled"] is True
     assert saved(files.config)["prospect_country"] == "US"
-    assert "PRECLEARED_API_KEY=existing_key" in files.env.read_text().splitlines()
+    assert "REACHMAX_PRECLEARED_API_KEY=existing_key" in files.env.read_text().splitlines()
 
 
 def test_no_switches_off_a_check_that_was_on_and_keeps_its_settings(files, monkeypatch):
@@ -185,7 +185,7 @@ def test_none_clears_a_saved_prospect_country(files, monkeypatch):
     assert saved(files.config)["enabled"] is True
 
 
-@pytest.mark.parametrize("env_text", ["", 'PRECLEARED_API_KEY=""\n'])
+@pytest.mark.parametrize("env_text", ["", 'REACHMAX_PRECLEARED_API_KEY=""\n'])
 def test_turning_it_on_without_a_key_leaves_a_placeholder(files, monkeypatch, capsys, env_text):
     files.env.write_text(env_text)
     asked = script(monkeypatch, yes_no=[True], answers=["US", "", ""])
@@ -194,17 +194,17 @@ def test_turning_it_on_without_a_key_leaves_a_placeholder(files, monkeypatch, ca
     finish(wizard)
 
     assert "Enter to skip" in asked.questions[-1].prompt  # an empty value is no key
-    assert any(line in ("PRECLEARED_API_KEY=", 'PRECLEARED_API_KEY=""')
+    assert any(line in ("REACHMAX_PRECLEARED_API_KEY=", 'REACHMAX_PRECLEARED_API_KEY=""')
                for line in files.env.read_text().splitlines())
     assert "10 checks a day" in capsys.readouterr().out
     assert saved(files.config)["enabled"] is True
 
 
 def test_a_new_config_file_gets_the_check(tmp_path, monkeypatch):
-    config = tmp_path / "harvey.yaml"  # not created yet
+    config = tmp_path / "reachmax.yaml"  # not created yet
     monkeypatch.setattr(setup, "CONFIG_FILE", config)
     monkeypatch.setattr(setup, "ENV_FILE", tmp_path / ".env")
-    monkeypatch.delenv("PRECLEARED_API_KEY", raising=False)
+    monkeypatch.delenv("REACHMAX_PRECLEARED_API_KEY", raising=False)
     script(monkeypatch, yes_no=[True], answers=["GB", "", ""])
     wizard = setup.SetupWizard()
     wizard._setup_compliance()
@@ -241,10 +241,10 @@ async def test_setup_asks_about_the_check_before_writing_anything(monkeypatch, c
 
 
 def test_saving_the_key_keeps_other_env_lines_and_stays_private(files, monkeypatch, capsys, caplog):
-    other = ('SMTP_PASSWORD=a=b=c\n'
-             'GMAIL_CLIENT_SECRET="quoted # not a comment"\n'
-             "HUNTER_API_KEY='single'\n"
-             'SERPER_API_KEY=abc#def')  # no trailing newline
+    other = ('REACHMAX_SMTP_PASSWORD=a=b=c\n'
+             'REACHMAX_GMAIL_CLIENT_SECRET="quoted # not a comment"\n'
+             "REACHMAX_HUNTER_API_KEY='single'\n"
+             'REACHMAX_SERPER_API_KEY=abc#def')  # no trailing newline
     files.env.write_text(other)
     script(monkeypatch, yes_no=[True], answers=["US", "", FAKE_KEY])
     wizard = setup.SetupWizard()
@@ -255,26 +255,26 @@ def test_saving_the_key_keeps_other_env_lines_and_stays_private(files, monkeypat
     lines = files.env.read_text().splitlines()
     for line in other.splitlines():
         assert line in lines
-    assert f"PRECLEARED_API_KEY={FAKE_KEY}" in lines
+    assert f"REACHMAX_PRECLEARED_API_KEY={FAKE_KEY}" in lines
     if os.name != "nt":   # Windows uses the folder's ACLs, not POSIX modes
         assert files.env.stat().st_mode & 0o777 == 0o600
     assert FAKE_KEY not in capsys.readouterr().out
     assert FAKE_KEY not in caplog.text
 
 
-# ── setup saves to the file Harvey reads, and says when it couldn't ──
+# ── setup saves to the file Reach Max reads, and says when it couldn't ──
 
 @pytest.fixture
 def trained(files):
-    """`harvey train` wrote harvey.local.yaml, which wins over harvey.yaml."""
-    local = files.config.with_name("harvey.local.yaml")
+    """`reachmax train` wrote reachmax.local.yaml, which wins over reachmax.yaml."""
+    local = files.config.with_name("reachmax.local.yaml")
     shutil.copy(files.config, local)
     files.local = local
     files.template = files.config.read_bytes()
     return files
 
 
-def test_after_harvey_train_setup_saves_to_harvey_local_yaml(trained, monkeypatch):
+def test_after_reachmax_train_setup_saves_to_reachmax_local_yaml(trained, monkeypatch):
     script(monkeypatch, yes_no=[True], answers=["GB", "", ""])
     wizard = setup.SetupWizard()
     wizard._setup_compliance()
@@ -284,7 +284,7 @@ def test_after_harvey_train_setup_saves_to_harvey_local_yaml(trained, monkeypatc
     assert trained.config.read_bytes() == trained.template  # template untouched
 
 
-def test_rerunning_setup_after_harvey_train_offers_the_saved_answers(trained, monkeypatch):
+def test_rerunning_setup_after_reachmax_train_offers_the_saved_answers(trained, monkeypatch):
     set_precleared(trained.local, enabled=True, sender_country="US")
     asked = script(monkeypatch, yes_no=[None], answers=["", "", ""])
     wizard = setup.SetupWizard()
@@ -296,9 +296,9 @@ def test_rerunning_setup_after_harvey_train_offers_the_saved_answers(trained, mo
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("has_local", [False, True])
-async def test_setup_trains_into_the_file_harvey_reads(files, monkeypatch, has_local):
+async def test_setup_trains_into_the_file_reachmax_reads(files, monkeypatch, has_local):
     if has_local:
-        shutil.copy(files.config, files.config.with_name("harvey.local.yaml"))
+        shutil.copy(files.config, files.config.with_name("reachmax.local.yaml"))
     outputs = []
 
     class FakeTrainer:
@@ -309,11 +309,11 @@ async def test_setup_trains_into_the_file_harvey_reads(files, monkeypatch, has_l
             outputs.append(output_path)
             return {"persona": {}}
 
-    monkeypatch.setattr("harvey.trainer.Trainer", FakeTrainer)
+    monkeypatch.setattr("reachmax.trainer.Trainer", FakeTrainer)
     script(monkeypatch, yes_no=[], answers=["url", "https://example.test"])
     await setup.SetupWizard()._setup_product()
 
-    name = "harvey.local.yaml" if has_local else "harvey.yaml"
+    name = "reachmax.local.yaml" if has_local else "reachmax.yaml"
     assert outputs == [str(files.config.with_name(name))]
 
 
@@ -344,7 +344,7 @@ async def test_a_config_that_cannot_be_saved_is_reported_not_ticked(files, monke
     wizard = setup.SetupWizard()
     wizard._setup_compliance()
     wizard.config = {"channels": {"email": {"max_daily_sends": 50}}}
-    wizard.env_vars["LINKEDIN_EMAIL"] = ""
+    wizard.env_vars["REACHMAX_LINKEDIN_EMAIL"] = ""
     wizard._write_env()
     wizard._write_config()  # must not crash setup
 

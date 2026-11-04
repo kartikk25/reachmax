@@ -1,6 +1,6 @@
 # DIY Prospecting Tactics
 
-Harvey's playbook for finding leads without expensive tools like Apollo, ZoomInfo, or Clearbit.
+Reach Max's playbook for finding leads without expensive tools like Apollo, ZoomInfo, or Clearbit.
 
 ---
 

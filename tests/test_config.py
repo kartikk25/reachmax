@@ -5,17 +5,17 @@ import os
 
 import yaml
 
-from harvey.config import HarveyConfig, EnvConfig, load_env
+from reachmax.config import ReachMaxConfig, EnvConfig, load_env
 
 
 def test_config_from_dict():
-    """HarveyConfig can be constructed from a dict (YAML-like)."""
+    """ReachMaxConfig can be constructed from a dict (YAML-like)."""
     data = {
         "persona": {
-            "name": "Harvey",
+            "name": "Reach Max",
             "company": "Acme",
             "role": "BDR",
-            "email": "harvey@acme.com",
+            "email": "reachmax@acme.com",
             "linkedin": "",
             "tone": "professional",
         },
@@ -33,8 +33,8 @@ def test_config_from_dict():
             "geography": ["US"],
         },
     }
-    config = HarveyConfig(**data)
-    assert config.persona.name == "Harvey"
+    config = ReachMaxConfig(**data)
+    assert config.persona.name == "Reach Max"
     assert config.product.name == "Widget"
     assert config.icp.industries == ["SaaS"]
     assert config.channels.email.max_daily_sends == 50  # default
@@ -56,7 +56,7 @@ def test_offer_config_defaults():
         "product": {"name": "P", "description": "D", "pricing": "$1", "key_benefits": [], "objection_responses": {}},
         "icp": {"industries": [], "company_size": "", "titles": [], "geography": []},
     }
-    config = HarveyConfig(**data)
+    config = ReachMaxConfig(**data)
     assert config.product.offer.goal == "book_call"
     assert config.product.offer.booking_method == "calendar_link"
     assert config.product.offer.meeting_duration == "15 minutes"

@@ -8,12 +8,12 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-import harvey.config as harvey_config
-import harvey.dashboard as dash
-from harvey.signals import seed_signal_catalog
-from harvey.state import StateManager
+import reachmax.config as reachmax_config
+import reachmax.dashboard as dash
+from reachmax.signals import seed_signal_catalog
+from reachmax.state import StateManager
 
-ORIGIN = "http://127.0.0.1:5555"
+ORIGIN = "http://127.0.0.1:5556"
 CONFIG = SimpleNamespace(
     icp=SimpleNamespace(industries=["forging company"], titles=["Managing Director"],
                         hiring_signals=["Forklift Operator"]),
@@ -24,12 +24,12 @@ CONFIG = SimpleNamespace(
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
-    db = tmp_path / "data" / "harvey.db"
+    db = tmp_path / "data" / "reachmax.db"
     monkeypatch.setattr(dash, "ENV_FILE", tmp_path / ".env")
     monkeypatch.setattr(dash, "DB_PATH", db)
-    monkeypatch.setattr(dash, "PID_FILE", tmp_path / "data" / "harvey.pid")
-    monkeypatch.setattr(dash, "LOG_FILE", tmp_path / "data" / "harvey.log")
-    monkeypatch.setattr(harvey_config, "load_config", lambda *a, **k: CONFIG)
+    monkeypatch.setattr(dash, "PID_FILE", tmp_path / "data" / "reachmax.pid")
+    monkeypatch.setattr(dash, "LOG_FILE", tmp_path / "data" / "reachmax.log")
+    monkeypatch.setattr(reachmax_config, "load_config", lambda *a, **k: CONFIG)
     dash.token_store.configure(tmp_path / "data" / "dashboard-token")
 
     async def _init():
@@ -97,7 +97,7 @@ def test_best_fit_first_across_more_than_the_page_cap(client, monkeypatch):
 
 
 def test_register_export_failure_is_an_error(client, monkeypatch):
-    import harvey.register as register
+    import reachmax.register as register
 
     async def broken(*a, **k):
         raise RuntimeError("boom")

@@ -6,9 +6,9 @@ import tempfile
 import pytest
 import pytest_asyncio
 
-from harvey.state import StateManager
-from harvey.integrations import email_finder as ef
-from harvey.integrations.email_finder import (
+from reachmax.state import StateManager
+from reachmax.integrations import email_finder as ef
+from reachmax.integrations.email_finder import (
     EmailResult,
     build_email,
     classify_mx,
@@ -226,7 +226,7 @@ async def test_find_email_inconclusive_is_guess_not_verified(state, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_hunter_budget_defaults_to_free_tier(state, monkeypatch):
-    monkeypatch.delenv("HUNTER_MONTHLY_SEARCHES", raising=False)
+    monkeypatch.delenv("REACHMAX_HUNTER_MONTHLY_SEARCHES", raising=False)
     assert await ef.hunter_searches_remaining(state) == 25
     await ef.record_hunter_search(state)
     assert await ef.hunter_searches_remaining(state) == 24
@@ -234,14 +234,14 @@ async def test_hunter_budget_defaults_to_free_tier(state, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_hunter_budget_follows_paid_plan_setting(state, monkeypatch):
-    monkeypatch.setenv("HUNTER_MONTHLY_SEARCHES", "500")
+    monkeypatch.setenv("REACHMAX_HUNTER_MONTHLY_SEARCHES", "500")
     assert await ef.hunter_searches_remaining(state) == 500
 
 
 @pytest.mark.asyncio
 async def test_derive_pattern_spends_and_respects_hunter_budget(state, monkeypatch):
     monkeypatch.setattr(ef, "_hunter_api_key", lambda: "k")
-    monkeypatch.setenv("HUNTER_MONTHLY_SEARCHES", "1")
+    monkeypatch.setenv("REACHMAX_HUNTER_MONTHLY_SEARCHES", "1")
     calls = []
 
     async def fake_hunter(domain, key):

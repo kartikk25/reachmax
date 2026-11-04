@@ -6,11 +6,11 @@ import tempfile
 import pytest
 import pytest_asyncio
 
-from harvey.state import StateManager
-from harvey.models.company import Company
-from harvey.models.prospect import Prospect
-from harvey.integrations.tech_detect import detect_tech
-from harvey.export import collect_prospects, export_prospects_csv, to_csv, CSV_COLUMNS
+from reachmax.state import StateManager
+from reachmax.models.company import Company
+from reachmax.models.prospect import Prospect
+from reachmax.integrations.tech_detect import detect_tech
+from reachmax.export import collect_prospects, export_prospects_csv, to_csv, CSV_COLUMNS
 
 
 @pytest_asyncio.fixture

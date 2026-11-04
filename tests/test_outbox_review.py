@@ -1,6 +1,6 @@
 """The Outbox review desk: the facts behind each draft, and editing it.
 
-Reviewing a cold email means checking its claims against what Harvey actually
+Reviewing a cold email means checking its claims against what Reach Max actually
 found. The desk shows that next to the draft, and lets a reviewer fix a draft
 that is nearly right instead of throwing the lead away.
 """
@@ -14,24 +14,24 @@ import aiosqlite
 import pytest
 from fastapi.testclient import TestClient
 
-import harvey.dashboard as dash
-from harvey.config import DEFAULT_OPT_OUT_LINE as LINE
-from harvey.models import Company
-from harvey.models.campaign import Campaign
-from harvey.models.prospect import Prospect
-from harvey.signals import seed_signal_catalog
-from harvey.state import StateManager
+import reachmax.dashboard as dash
+from reachmax.config import DEFAULT_OPT_OUT_LINE as LINE
+from reachmax.models import Company
+from reachmax.models.campaign import Campaign
+from reachmax.models.prospect import Prospect
+from reachmax.signals import seed_signal_catalog
+from reachmax.state import StateManager
 
 
 @pytest.fixture
 def client(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
-        db = Path(tmp) / "harvey.db"
+        db = Path(tmp) / "reachmax.db"
         monkeypatch.setattr(dash, "DB_PATH", db)
-        monkeypatch.setattr(dash, "WEB_DIR", Path(__file__).resolve().parent.parent / "harvey" / "web")
+        monkeypatch.setattr(dash, "WEB_DIR", Path(__file__).resolve().parent.parent / "reachmax" / "web")
         dash.token_store.configure(Path(tmp) / "data" / "dashboard-token")
         token = dash.token_store.get()
-        with TestClient(dash.app, base_url="http://127.0.0.1:5555",
+        with TestClient(dash.app, base_url="http://127.0.0.1:5556",
                         headers={"Authorization": f"Bearer {token}"}) as c:
             c.db_path = db
             yield c

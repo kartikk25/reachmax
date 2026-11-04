@@ -3,11 +3,11 @@ from pathlib import Path
 
 import yaml
 
-from harvey.paths import PROJECT_ROOT
+from reachmax.paths import PROJECT_ROOT
 
 
 def service():
-    return yaml.safe_load((PROJECT_ROOT / "docker-compose.yml").read_text())["services"]["harvey"]
+    return yaml.safe_load((PROJECT_ROOT / "docker-compose.yml").read_text())["services"]["reachmax"]
 
 
 def test_compose_preserves_loopback_and_uses_dashboard():
@@ -32,30 +32,30 @@ def test_compose_mounts_directory_for_atomic_saves():
 
 
 def test_setup_and_atomic_training_saves_survive_reloading(tmp_path, monkeypatch):
-    from harvey import setup, dashboard
-    from harvey.config import load_config
-    from harvey.trainer import write_trained_config
+    from reachmax import setup, dashboard
+    from reachmax.config import load_config
+    from reachmax.trainer import write_trained_config
 
-    base = tmp_path / "harvey.yaml"
-    base.write_text((PROJECT_ROOT / "harvey.yaml").read_text())
+    base = tmp_path / "reachmax.yaml"
+    base.write_text((PROJECT_ROOT / "reachmax.yaml").read_text())
     env = tmp_path / ".env"
-    env.write_text("SERPER_API_KEY=fixture_original\n")
+    env.write_text("REACHMAX_SERPER_API_KEY=fixture_original\n")
     monkeypatch.setattr(setup, "CONFIG_FILE", base)
     monkeypatch.setattr(setup, "ENV_FILE", env)
     monkeypatch.setattr(dashboard, "ENV_FILE", env)
     wizard = setup.SetupWizard()
-    wizard.env_vars = {"SERPER_API_KEY": "fixture_setup"}
+    wizard.env_vars = {"REACHMAX_SERPER_API_KEY": "fixture_setup"}
     wizard.config = {"usage": {"max_daily_claude_percent": 7}}
     wizard._write_env()
     wizard._write_config()
     assert wizard.config_saved
-    dashboard._write_env_file({"SERPER_API_KEY": "fixture_dashboard"})
+    dashboard._write_env_file({"REACHMAX_SERPER_API_KEY": "fixture_dashboard"})
     learned = yaml.safe_load(base.read_text())
     learned["product"]["name"] = "Fixture Product"
-    local = tmp_path / "harvey.local.yaml"
+    local = tmp_path / "reachmax.local.yaml"
     write_trained_config(learned, local)
     learned["product"]["name"] = "Fixture Updated"
     write_trained_config(learned, local)
     assert load_config(str(local)).product.name == "Fixture Updated"
     assert load_config(str(local)).usage.max_daily_claude_percent == 7
-    assert "SERPER_API_KEY=fixture_dashboard" in env.read_text()
+    assert "REACHMAX_SERPER_API_KEY=fixture_dashboard" in env.read_text()

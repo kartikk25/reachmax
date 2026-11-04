@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from harvey.fit import company_fit
+from reachmax.fit import company_fit
 
 
 def config(dnc=()):

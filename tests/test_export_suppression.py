@@ -9,9 +9,9 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from harvey.export import collect_prospects, export_prospects_csv
-from harvey.models.prospect import Prospect
-from harvey.state import StateManager
+from reachmax.export import collect_prospects, export_prospects_csv
+from reachmax.models.prospect import Prospect
+from reachmax.state import StateManager
 
 
 async def _seed_state(tmp_path):
@@ -95,13 +95,13 @@ async def test_export_does_not_drop_legacy_null_pipeline_status(state):
     (["--all"], {"New", "Catchall", "Contacted", "Guess", "Optout", "OptoutCatchall"}),
 ])
 def test_cli_export_respects_suppression_and_raw_mode(tmp_path, monkeypatch, all_flag, expected):
-    from harvey import cli, state as state_module
+    from reachmax import cli, state as state_module
 
     state = asyncio.run(_seed_state(tmp_path))
     # Redirect only the CLI's default database selection to real temporary state.
     monkeypatch.setattr(state_module, "StateManager", lambda: state)
     output = tmp_path / "prospects.csv"
-    monkeypatch.setattr(sys, "argv", ["harvey", "export", "--out", str(output), *all_flag])
+    monkeypatch.setattr(sys, "argv", ["reachmax", "export", "--out", str(output), *all_flag])
     cli.main()
     assert _names(output.read_text(encoding="utf-8")) == expected
 
@@ -112,14 +112,14 @@ def test_cli_export_respects_suppression_and_raw_mode(tmp_path, monkeypatch, all
     ("?all=true", {"New", "Catchall", "Contacted", "Guess", "Optout", "OptoutCatchall"}),
 ])
 async def test_authenticated_dashboard_export_uses_the_same_policy(state, monkeypatch, query, expected):
-    from harvey import dashboard
+    from reachmax import dashboard
 
     monkeypatch.setattr(dashboard, "DB_PATH", state.db_path)
     # conftest redirects this store into a temporary directory for every test.
     token = dashboard.token_store.get()
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=dashboard.app),
-        base_url="http://127.0.0.1:5555",
+        base_url="http://127.0.0.1:5556",
         headers={"Authorization": f"Bearer {token}"},
     ) as client:
         response = await client.get("/api/export/prospects.csv" + query)

@@ -3,8 +3,8 @@ use another service. Either answer completes the step, so nobody is asked twice.
 
 import pytest
 
-import harvey.dashboard as dash
-from harvey.integrations import trulyinbox as ti
+import reachmax.dashboard as dash
+from reachmax.integrations import trulyinbox as ti
 from tests.test_dashboard_live_status import client, env  # noqa: F401  (fixtures)
 
 
@@ -15,8 +15,8 @@ def _step(client):
 
 @pytest.fixture(autouse=True)
 def _no_key(monkeypatch):
-    monkeypatch.delenv("TRULYINBOX_API_KEY", raising=False)
-    monkeypatch.delenv("TRULYINBOX_WORKSPACE_ID", raising=False)
+    monkeypatch.delenv("REACHMAX_TRULYINBOX_API_KEY", raising=False)
+    monkeypatch.delenv("REACHMAX_TRULYINBOX_WORKSPACE_ID", raising=False)
 
 
 def test_the_step_starts_open_with_the_link(client):
@@ -44,7 +44,7 @@ def test_connecting_checks_the_key_then_saves_it(client, monkeypatch):
     r = client.post("/api/trulyinbox/connect", json={"key": "  ti_ws_abc  "}).json()
     assert r["success"] and "isn't in your TrulyInbox" in r["message"]
     assert seen["key"] == "ti_ws_abc"
-    assert written == {"TRULYINBOX_API_KEY": "ti_ws_abc", "TRULYINBOX_WORKSPACE_ID": "42"}
+    assert written == {"REACHMAX_TRULYINBOX_API_KEY": "ti_ws_abc", "REACHMAX_TRULYINBOX_WORKSPACE_ID": "42"}
     assert _step(client)["done"]
 
 

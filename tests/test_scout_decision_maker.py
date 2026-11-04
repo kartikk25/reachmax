@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import harvey.agents.scout as scout_mod
-import harvey.integrations.email_finder as ef
-from harvey.agents.scout import Scout
-from harvey.collectors.profile import ProfileCollector
+import reachmax.agents.scout as scout_mod
+import reachmax.integrations.email_finder as ef
+from reachmax.agents.scout import Scout
+from reachmax.collectors.profile import ProfileCollector
 from tests.test_people_finder import LANTERN, WHITLOCK
 
 OWNER_ICP = ["Owner", "Founder", "President", "CEO"]

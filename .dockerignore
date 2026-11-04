@@ -3,9 +3,9 @@
 **
 !Dockerfile
 !requirements.txt
-!harvey.yaml
-!harvey/
-!harvey/**
+!reachmax.yaml
+!reachmax/
+!reachmax/**
 !prompts/
 !prompts/**
 !skills/

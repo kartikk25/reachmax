@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from harvey import claude_runtime
-from harvey.claude_runtime import find_claude as real_find_claude  # conftest stubs it
+from reachmax import claude_runtime
+from reachmax.claude_runtime import find_claude as real_find_claude  # conftest stubs it
 
-HARVEY = Path(__file__).resolve().parent.parent / "harvey"
+REACHMAX = Path(__file__).resolve().parent.parent / "reachmax"
 
 
 def _text_io_without_encoding(tree):
@@ -39,25 +39,25 @@ def _text_io_without_encoding(tree):
 
 
 def test_every_text_file_is_read_and_written_as_utf8():
-    # Windows defaults to the locale code page (cp1252): harvey train
+    # Windows defaults to the locale code page (cp1252): reachmax train
     # crashed on "★" and prompts came out garbled.
     offenders = [
-        f"{path.relative_to(HARVEY.parent)}:{line}"
-        for path in sorted(HARVEY.rglob("*.py"))
+        f"{path.relative_to(REACHMAX.parent)}:{line}"
+        for path in sorted(REACHMAX.rglob("*.py"))
         for line in _text_io_without_encoding(ast.parse(path.read_text(encoding="utf-8")))
     ]
     assert offenders == []
 
 
 def test_config_and_prompts_with_non_ascii_text_load(tmp_path, monkeypatch):
-    from harvey.brain import Brain
-    import harvey.brain as brain_mod
-    from harvey.config import load_config
+    from reachmax.brain import Brain
+    import reachmax.brain as brain_mod
+    from reachmax.config import load_config
 
     import yaml
-    data = yaml.safe_load((HARVEY.parent / "harvey.yaml").read_text(encoding="utf-8"))
+    data = yaml.safe_load((REACHMAX.parent / "reachmax.yaml").read_text(encoding="utf-8"))
     data["persona"]["company"] = "Acme — Studio ★"
-    config = tmp_path / "harvey.yaml"
+    config = tmp_path / "reachmax.yaml"
     config.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
     loaded = load_config(str(config))
     assert loaded.persona.company == "Acme — Studio ★"
@@ -146,9 +146,9 @@ def test_not_installed_is_still_none(monkeypatch):
 # ── Console output ──
 
 def test_cli_output_never_crashes_on_a_legacy_code_page():
-    # The dashboard runs `harvey run` with output going to a log file, which
+    # The dashboard runs `reachmax run` with output going to a log file, which
     # Windows opens in cp1252: "⚠" or "→" in a message would crash print().
-    from harvey.textio import utf8_stdio
+    from reachmax.textio import utf8_stdio
     raw = io.BytesIO()
     stream = io.TextIOWrapper(raw, encoding="cp1252")
     utf8_stdio(stream)
@@ -169,24 +169,24 @@ def test_installing_the_missing_executable_changes_the_fingerprint(tmp_path, mon
 
 
 def test_files_saved_in_the_old_windows_code_page_still_load(tmp_path, caplog):
-    # Before this fix, Harvey on Windows saved trained skills as cp1252.
-    from harvey.textio import read_user_text
+    # Before this fix, Reach Max on Windows saved trained skills as cp1252.
+    from reachmax.textio import read_user_text
     old = tmp_path / "product_knowledge.md"
     old.write_bytes("We\u2019re a caf\u00e9 \u2014 fast.".encode("cp1252"))
     text = read_user_text(old)
     assert "caf" in text and "fast" in text
     assert "isn't saved as UTF-8" in caplog.text
     bom = tmp_path / ".env"
-    bom.write_bytes("\ufeffGMAIL_CLIENT_ID=x\n".encode("utf-8"))
-    assert read_user_text(bom).startswith("GMAIL_CLIENT_ID=")  # Notepad's BOM dropped
+    bom.write_bytes("\ufeffREACHMAX_GMAIL_CLIENT_ID=x\n".encode("utf-8"))
+    assert read_user_text(bom).startswith("REACHMAX_GMAIL_CLIENT_ID=")  # Notepad's BOM dropped
 
 
 def test_a_cp1252_config_loads(tmp_path):
     import yaml
-    from harvey.config import load_config
-    data = yaml.safe_load((HARVEY.parent / "harvey.yaml").read_text(encoding="utf-8"))
+    from reachmax.config import load_config
+    data = yaml.safe_load((REACHMAX.parent / "reachmax.yaml").read_text(encoding="utf-8"))
     data["persona"]["company"] = "Caf\u00e9 \u2014 Studio"
-    config = tmp_path / "harvey.yaml"
+    config = tmp_path / "reachmax.yaml"
     config.write_bytes(yaml.safe_dump(data, allow_unicode=True).encode("cp1252"))
     company = load_config(str(config)).persona.company
     import locale
@@ -233,7 +233,7 @@ def test_a_shim_pointing_to_another_drive(tmp_path):
 
 
 def test_windows_line_endings_read_as_newlines(tmp_path):
-    from harvey.textio import read_user_text
+    from reachmax.textio import read_user_text
     f = tmp_path / "skill.md"
     f.write_bytes(b"# Humanizer\r\nCut the tells.\r\n")
     assert read_user_text(f) == "# Humanizer\nCut the tells.\n"

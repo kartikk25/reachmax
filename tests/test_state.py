@@ -7,9 +7,9 @@ import os
 import pytest
 import pytest_asyncio
 
-from harvey.state import StateManager
-from harvey.models.prospect import Prospect
-from harvey.models.company import Company
+from reachmax.state import StateManager
+from reachmax.models.prospect import Prospect
+from reachmax.models.company import Company
 
 
 @pytest_asyncio.fixture

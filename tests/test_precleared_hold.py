@@ -4,7 +4,7 @@ The check holds cold email (never replies) when Precleared can't answer:
 its free daily checks are used up, the key has no checks left, the key was
 rejected, or it can't be reached. Until now that only reached the log, so a
 user saw cold email go out slower and didn't know why. The sender now records
-the hold under STATUS_KEY; the Today page and `harvey status` read it and say
+the hold under STATUS_KEY; the Today page and `reachmax status` read it and say
 how to fix it. No network: every Precleared call goes to an httpx.MockTransport.
 """
 
@@ -18,14 +18,14 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from harvey.integrations.precleared import (
+from reachmax.integrations.precleared import (
     STATUS_KEY,
     Clearance,
     current_hold,
     hold_message,
     record_hold,
 )
-from harvey.state import StateManager
+from reachmax.state import StateManager
 from tests.test_dashboard_signals import client  # noqa: F401 (fixture)
 from tests.test_outbox_native import FakeProvider, make_sender, seed_prospect
 from tests.test_precleared import OK_BODY, days_pass, mock_status, queue, with_check
@@ -201,7 +201,7 @@ def test_messages_say_how_to_fix_each_hold():
                             "url": "https://precleared.dev/get-key"})
     assert keyless["title"] == "Precleared's free checks for today are used up"
     assert keyless["detail"].startswith("1 cold email is waiting.")
-    assert "PRECLEARED_API_KEY" in keyless["detail"]
+    assert "REACHMAX_PRECLEARED_API_KEY" in keyless["detail"]
     assert keyless["url_label"] == "Get a free key"
 
     out = hold_message({"kind": "out_of_checks", "waiting": 12, "url": CHECKOUT})
@@ -239,7 +239,7 @@ def fake_config(enabled=True, provider="gmail"):
 
 
 def check_on(monkeypatch, **kwargs):
-    import harvey.config as config_mod
+    import reachmax.config as config_mod
     monkeypatch.setattr(config_mod, "load_config", lambda *a, **k: fake_config(**kwargs))
 
 
@@ -270,8 +270,8 @@ def test_today_says_nothing_without_a_hold(client):  # noqa: F811
 
 def test_cli_status_shows_the_hold(monkeypatch, tmp_path, capsys):
     check_on(monkeypatch)
-    import harvey.cli as cli
-    import harvey.state as state_mod
+    import reachmax.cli as cli
+    import reachmax.state as state_mod
 
     db = tmp_path / "status.db"
     since = _now()
@@ -285,7 +285,7 @@ def test_cli_status_shows_the_hold(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert f"Precleared:           HOLDING COLD EMAIL since {since}" in out
     assert "2 cold emails are waiting" in out
-    assert "PRECLEARED_API_KEY" in out
+    assert "REACHMAX_PRECLEARED_API_KEY" in out
 
 
 # ── integration fixes ──
@@ -293,7 +293,7 @@ def test_cli_status_shows_the_hold(monkeypatch, tmp_path, capsys):
 
 @pytest.mark.asyncio
 async def test_since_restarts_after_a_stale_gap(state):
-    # A hold last seen days ago (Harvey stopped, or the check was off) is
+    # A hold last seen days ago (Reach Max stopped, or the check was off) is
     # over: hitting the same kind again starts a new one, not "since" then.
     old = (datetime.now(timezone.utc) - timedelta(days=3)).replace(microsecond=0).isoformat()
     await state.set_setting(STATUS_KEY, json.dumps({
@@ -376,8 +376,8 @@ def test_hold_message_strips_control_characters_from_a_stored_hold():
 
 
 def test_cli_status_never_prints_control_characters(monkeypatch, tmp_path, capsys):
-    import harvey.cli as cli
-    import harvey.state as state_mod
+    import reachmax.cli as cli
+    import reachmax.state as state_mod
 
     check_on(monkeypatch)
     db = tmp_path / "status.db"
@@ -398,7 +398,7 @@ def test_cli_status_never_prints_control_characters(monkeypatch, tmp_path, capsy
 async def test_an_escaped_or_encoded_key_is_redacted_too(state, form):
     import re
     from urllib.parse import quote
-    from harvey.integrations.precleared import PreclearedClient
+    from reachmax.integrations.precleared import PreclearedClient
 
     key = "pc_live_Ab/Cd+Ef=Gh9"
     echoed = {
@@ -426,7 +426,7 @@ async def test_an_escaped_or_encoded_key_is_redacted_too(state, form):
     "https://evilprecleared.dev/buy",
 ])
 async def test_a_checkout_link_off_precleared_falls_back_to_the_buy_page(state, url):
-    from harvey.integrations.precleared import BUY_URL, PreclearedClient
+    from reachmax.integrations.precleared import BUY_URL, PreclearedClient
 
     client = PreclearedClient("GB", api_key="pc_live_test",
                               transport=mock_status(402, {"buy_url": url}))
@@ -440,7 +440,7 @@ async def test_a_checkout_link_off_precleared_falls_back_to_the_buy_page(state, 
 
 @pytest.mark.asyncio
 async def test_a_checkout_link_on_precleared_is_kept(state):
-    from harvey.integrations.precleared import PreclearedClient
+    from reachmax.integrations.precleared import PreclearedClient
 
     url = "https://pay.precleared.dev/session/example123"
     client = PreclearedClient("GB", api_key="pc_live_test",
@@ -453,7 +453,7 @@ async def test_a_checkout_link_on_precleared_is_kept(state):
 
 @pytest.mark.asyncio
 async def test_count_due_cold_outbox_counts_only_due_approved_cold_email(state):
-    from harvey.agents.sender import Sender  # noqa: F401 (schema in place)
+    from reachmax.agents.sender import Sender  # noqa: F401 (schema in place)
 
     a = await seed_prospect(state, email="a@example.com")
     b = await seed_prospect(state, email="b@example.com")
@@ -514,8 +514,8 @@ def test_today_hides_the_hold_when_the_check_is_off(client, monkeypatch):  # noq
 
 
 def test_cli_status_hides_the_hold_when_the_provider_is_not_native(monkeypatch, tmp_path, capsys):
-    import harvey.cli as cli
-    import harvey.state as state_mod
+    import reachmax.cli as cli
+    import reachmax.state as state_mod
 
     check_on(monkeypatch, provider="instantly")
     db = tmp_path / "status.db"

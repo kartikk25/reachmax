@@ -7,6 +7,15 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Reach Max fork
+
+- Imported the MIT-licensed Harvey source into its own local Git history with
+  no upstream remote. The Python package, CLI, configuration files, database,
+  dashboard token, environment settings, and Docker image are Reach Max-specific.
+- Set the dashboard port and default weekday send window to 05:00–17:00.
+- Recorded the multi-mailbox implementation requirements in `REACH_MAX_SPEC.md`.
+- Baseline test run on Python 3.14: 2,804 passed, 184 skipped.
+
 ### Added
 
 - **Company fit and the company register.** The Companies tab now sorts by a
@@ -20,7 +29,7 @@ minor versions can still change behaviour.
   `channels.email.send_to_risky` is on, and the do-not-contact list is read
   as the sender reads it, so an entry added while Harvey runs shows at once. Clicking a company opens a details card above its contacts: website,
   sector, area, why it was selected, the people named on its site and the
-  hiring roles, each linked to the page they came from. `harvey companies`
+  hiring roles, each linked to the page they came from. `reachmax companies`
   (or *Export register* on the tab) writes the whole register as a CSV,
   including companies with no contact, so they can be worked another way.
   The tab now lists up to 2,000 companies, best fit first and paged 50 at a
@@ -45,9 +54,9 @@ minor versions can still change behaviour.
 - **Scavio discovery providers** (`scavio_maps`, `scavio_search`). Google Maps
   listings around each city, with phone, website, category, rating and review
   count, and Google organic results with rank, both from one
-  `SCAVIO_API_KEY`. Maps is 1 credit per 20 businesses and Search 1 credit per
+  `REACHMAX_SCAVIO_API_KEY`. Maps is 1 credit per 20 businesses and Search 1 credit per
   10 results; estimates use the $0.01 pay-as-you-go credit price. Off unless
-  you pick one in `harvey discover` or the dashboard. Closes #28.
+  you pick one in `reachmax discover` or the dashboard. Closes #28.
 - **Sent emails on the Conversations tab.** A new *Awaiting reply* filter
   lists people Harvey recently emailed who haven't answered yet (from its
   latest 2,000 sent emails), with each sent
@@ -65,12 +74,12 @@ minor versions can still change behaviour.
   HTML with the logo embedded. Off by default. An unusable logo holds approved
   email and says why on Today, rather than sending without it.
 - **TrulyInbox for warmup.** Harvey now recommends TrulyInbox for warming and
-  keeping sending mailboxes healthy, and reads it: `harvey trulyinbox connect`
+  keeping sending mailboxes healthy, and reads it: `reachmax trulyinbox connect`
   (or the new warmup step on the dashboard's setup checklist) checks a key and
-  saves it, and `harvey warmup` then says whether the sending mailbox is
+  saves it, and `reachmax warmup` then says whether the sending mailbox is
   actually warmed: enrolled, signed in, warmed for `min_days`, and under 5%
   spam in its warmup mail. Read-only; it never changes anything in TrulyInbox.
-  `harvey trulyinbox other` records that you use another warmup service.
+  `reachmax trulyinbox other` records that you use another warmup service.
 - **A do-not-contact list, enforced at send time.** `compliance.do_not_contact`
   takes addresses and domains Harvey must never email: competitors, your
   existing customers, anyone under a legal hold, a partner you agreed not to
@@ -85,7 +94,7 @@ minor versions can still change behaviour.
   `Jane Doe <jane@acme.example>` (that address) and `acme.example` behave
   alike; an entry that names nothing is a config error, not a silent no-op.
   An edit counts at once in a running Harvey. A listed person who writes
-  back goes to you without a draft, and `harvey export` leaves them out. On
+  back goes to you without a draft, and `reachmax export` leaves them out. On
   Instantly, which has no Outbox, listed leads are left out of the upload
   and a reply to one goes to you; a lead Instantly already has must be
   removed there.
@@ -100,14 +109,14 @@ minor versions can still change behaviour.
   Discovery has a domain, not an address, so only domain entries apply here:
   `jane@acme.example` bars one mailbox, and acme.example stays discoverable
   because a colleague there may still be worth reaching. Skipped companies
-  are counted separately from junk, and `harvey discover` prints the count
+  are counted separately from junk, and `reachmax discover` prints the count
   only when it isn't zero — junk asks whether a result is a business at all,
   this asks whether you are allowed to approach one, and burying the second
   in the first is how a list that has grown too broad goes unnoticed.
 
-- **TinyFish as a free discovery source** (from #95). `harvey discover
+- **TinyFish as a free discovery source** (from #95). `reachmax discover
   --provider tinyfish` (or *TinyFish* on the Discover tab) finds businesses
-  by phrase with a free `TINYFISH_API_KEY`, no card, and runs the `yc`,
+  by phrase with a free `REACHMAX_TINYFISH_API_KEY`, no card, and runs the `yc`,
   `hiring`, `accelerator` and `funding` presets. Harvey paces it to its
   published limits, 30 searches a minute and 500 an hour, and a run that
   uses up the hour (or is refused the key) stops and says why instead of
@@ -132,7 +141,7 @@ minor versions can still change behaviour.
   role. Pages linking three or more boards, none named like the site (an
   agency or a VC portfolio page), are attributed to nobody. Sites without a
   board still get the careers-page read.
-  The new `hiring` discovery preset (`harvey discover --preset hiring`, or
+  The new `hiring` discovery preset (`reachmax discover --preset hiring`, or
   *Look for: Companies hiring for your roles*) searches through Serper or
   DataForSEO SERP for companies whose own careers pages list your roles.
   `skills/signal_playbook.md` has a short section on using a posting as the
@@ -175,7 +184,7 @@ minor versions can still change behaviour.
   set; Gmail, Microsoft and SMTP only.
 
 - **A built-in skill for selling to YC startups.** The `yc` discovery preset
-  (`harvey discover --preset yc`, or *Look for: YC startups* on Discover)
+  (`reachmax discover --preset yc`, or *Look for: YC startups* on Discover)
   searches your industries, through Serper or DataForSEO SERP, for companies
   whose own site says they're backed by Y Combinator. The new `YC_BACKED`
   signal tags them from their homepage or About page (a reference to their
@@ -214,7 +223,7 @@ minor versions can still change behaviour.
   running Harvey picks it up next cycle. Each outbox row records who
   approved it (`approved_by`: you, autopilot, or earlier for rows from
   before this). The README has a plain table of what each mode does.
-- **`harvey warmup [domain]`**: checks whether a sending domain is ready for
+- **`reachmax warmup [domain]`**: checks whether a sending domain is ready for
   cold email. It covers MX, SPF (`+all`, duplicates, top-level lookups), DKIM,
   DMARC, domain age, domain and SMTP-IP blocklists (a list that refuses the
   query is reported as such, not as a listing), warmup progress and bounce
@@ -227,21 +236,21 @@ minor versions can still change behaviour.
   Instantly has its own warmup and per-account limits. Replies are never
   held. Off unless `start_date` is set. Both based on #18 by Tariz Shahid.
 - **A postal address and opt-out line under every cold email** (CAN-SPAM).
-  Set `compliance.postal_address` in `harvey.yaml`; `compliance.opt_out_line`
+  Set `compliance.postal_address` in `reachmax.yaml`; `compliance.opt_out_line`
   defaults to *Not interested? Reply "no thanks" and I won't email again.*
   Both are added when the email sends (native providers and Instantly), never
   to replies, and the Outbox shows them under each draft; "Open in Gmail"
   includes them too. Without an address (or with the opt-out line turned
-  off), cold email still sends, and `harvey run`, `harvey status` and the
+  off), cold email still sends, and `reachmax run`, `reachmax status` and the
   Outbox tab warn until it's set. The opt-out line must ask for a reply
   Harvey recognises and can't contain a link. Based on #13 by Camilo Cruz.
-- **The Today page and `harvey status` say when Precleared is holding cold
+- **The Today page and `reachmax status` say when Precleared is holding cold
   email.** When the check can't be made (its free checks for the day are used
   up, the key is out of checks, was rejected or is being rate limited, or
   Precleared can't be reached), cold email to new addresses waits and replies
   still go out, but this used to reach only the log, so cold email just went
   out slower. Harvey now records the hold, and the Today page and
-  `harvey status` say how many cold emails are waiting and what fixes it: a
+  `reachmax status` say how many cold emails are waiting and what fixes it: a
   free key, a pack for that key (the checkout link from Precleared's answer),
   or nothing but time. The next fresh answer clears it, a hold not seen for a
   day is ignored, and switching the check off clears it. (from #57 by
@@ -367,17 +376,17 @@ minor versions can still change behaviour.
   message being answered is kept almost whole.
 
 - **The dashboard's Start and Stop work, on Windows and everywhere else.**
-  Start launched `python -m harvey` with no command, so the loop printed the
-  help and exited; it now runs `harvey run`, and finds `claude` in
+  Start launched `python -m reachmax` with no command, so the loop printed the
+  help and exited; it now runs `reachmax run`, and finds `claude` in
   `~/.local/bin` when the native installer left it off PATH. On Windows the
   "is it running?" check was `os.kill(pid, 0)`, which there terminates the
   process it asks about, and a stale PID file made the status and Start
-  return 500. The check now asks the OS without signalling. `harvey run`
+  return 500. The check now asks the OS without signalling. `reachmax run`
   records itself too, so a loop started in a terminal shows as running, and
-  holds a lock on `data/harvey.lock`: a PID file left by a crash or a reboot
+  holds a lock on `data/reachmax.lock`: a PID file left by a crash or a reboot
   can name an unrelated program, which is now reported as stopped and never
-  signalled, and a second `harvey run` refuses to start while one is
-  running. Start refuses, with the reason, until `harvey setup` has been
+  signalled, and a second `reachmax run` refuses to start while one is
+  running. Start refuses, with the reason, until `reachmax setup` has been
   run (the loop used to sit in the setup wizard reading the dashboard's
   terminal), and Stop says so when it couldn't end the loop instead of
   reporting success. (From #91 and #90.)
@@ -453,9 +462,9 @@ minor versions can still change behaviour.
   inbox.** Sending waits until replies are read, so an opt-out stops its
   follow-up. That hold only showed in the log, so a lapsed Gmail sign-in
   could stall sending for days unnoticed. Today now shows it first, with
-  the reason, how long, how many emails are waiting and the fix (`harvey
-  gmail auth`, `harvey microsoft auth`, or a mailbox over the read limit),
-  and so does `harvey status`. It clears itself once sending runs again.
+  the reason, how long, how many emails are waiting and the fix (`reachmax
+  gmail auth`, `reachmax microsoft auth`, or a mailbox over the read limit),
+  and so does `reachmax status`. It clears itself once sending runs again.
 - **Gmail: nothing sends until the whole inbox has been read** (from #62 by
   xiaoheiai4719-collab). A failed or partial inbox read used to look like
   an empty inbox, so a follow-up could go out before an opt-out on page two
@@ -479,10 +488,10 @@ minor versions can still change behaviour.
   The model never had tools, files or network to act with, so this was
   never more than what it wrote.
 - **Opted-out contacts are no longer in the prospect CSV.** Someone who
-  replied "unsubscribe" stayed in `harvey export` and the dashboard's Export
+  replied "unsubscribe" stayed in `reachmax export` and the dashboard's Export
   button, so taking the list to another sequencer could email them again.
   They're now left out even when `--status` or `--email-status` is given;
-  `harvey export --all` (and `?all=true`) is still the raw, unfiltered dump.
+  `reachmax export --all` (and `?all=true`) is still the raw, unfiltered dump.
   From #64 by hifzabuildsai.
 - **An opt-out now stays an opt-out.** Any later message from someone who
   opted out (an out-of-office, a "thanks") set them back to *replied* or
@@ -512,16 +521,16 @@ minor versions can still change behaviour.
   sequence within minutes, or step 2 before step 1. A follow-up whose earlier
   email was rejected or failed is cancelled instead of arriving as a first
   email.
-- **Windows:** text files (harvey.yaml, .env, prompts, skills, trained
+- **Windows:** text files (reachmax.yaml, .env, prompts, skills, trained
   output, tokens, exports) are read and written as UTF-8 instead of the
-  locale code page, so `harvey train` no longer crashes on characters like
+  locale code page, so `reachmax train` no longer crashes on characters like
   "★" and prompts aren't garbled; command output is UTF-8 too, so the
-  dashboard's log of `harvey run` can't crash on "⚠". An npm install's
+  dashboard's log of `reachmax run` can't crash on "⚠". An npm install's
   `claude.cmd` shim is resolved to the native `claude.exe` it wraps and is
   never run through cmd.exe, which would re-parse Harvey's isolation flags;
   if the executable is missing, Harvey says how to fix it. Files an older
-  Harvey saved in the Windows code page (trained skills, harvey.yaml) still
-  load, with a warning to re-save them as UTF-8. `harvey export` CSVs are now
+  Harvey saved in the Windows code page (trained skills, reachmax.yaml) still
+  load, with a warning to re-save them as UTF-8. `reachmax export` CSVs are now
   UTF-8 on Windows too, which sequencers expect (Excel needs Data > From
   Text/CSV to show accents). Based on #18 by Tariz Shahid.
 - Replies are read without the email they quote. The model, the stored thread
@@ -546,18 +555,18 @@ minor versions can still change behaviour.
   DNS rebinding. Preserve the original hostname for TLS verification. Website
   fetching (search, company sites, profiling, the training crawler) now ignores
   `HTTP_PROXY`/`HTTPS_PROXY`, so it can't be routed around that boundary; mail
-  and API integrations are unchanged. `harvey train` refuses local or intranet
+  and API integrations are unchanged. `reachmax train` refuses local or intranet
   URLs and says so.
 - **Instantly users: check `require_approval`.** Instantly has no per-email
   approval queue, so with `channels.email.require_approval: true` (the default)
   Harvey now holds campaign deployment and hands replies to a human instead of
-  silently bypassing the setting. `harvey run` and `harvey status` say when this
+  silently bypassing the setting. `reachmax run` and `reachmax status` say when this
   is happening; prospecting and drafting carry on (drafts wait, using model
   quota, until sending is allowed). Set `require_approval: false` for
   Instantly autopilot.
 - Disable LinkedIn by default in the model, sample config, and product trainer;
   save the setup wizard's explicit LinkedIn choice when updating a config.
-  Answering "no" to LinkedIn when re-running `harvey setup` now turns it off
+  Answering "no" to LinkedIn when re-running `reachmax setup` now turns it off
   (saved credentials stay in `.env`).
 - Protect the local dashboard with an access token, restrict requests to trusted
   local origins, and save settings with owner-only permissions. Update and restart
@@ -591,7 +600,7 @@ minor versions can still change behaviour.
 - **Microsoft 365 mail provider.** Set `channels.email.provider: microsoft` to
   send and read through a Microsoft 365 / Outlook mailbox via Microsoft Graph,
   for domains whose mail lives in Exchange Online (which no longer accepts
-  passwords over IMAP). Signs in once with OAuth + PKCE (`harvey microsoft
+  passwords over IMAP). Signs in once with OAuth + PKCE (`reachmax microsoft
   auth`; no client secret, no stored password), drafts then sends so the
   Message-ID is known, threads replies with `createReply`, reads the last 7
   days of the inbox without marking anything read, refuses to act as any
@@ -613,17 +622,17 @@ minor versions can still change behaviour.
   sender country, address source or product description triggers a fresh
   check. The receipt id is logged with each send. Native providers only. Off
   by default.
-- **`harvey setup` offers the Precleared check** (from #46 by
+- **`reachmax setup` offers the Precleared check** (from #46 by
   gabrielaoimevbore-beep). A new optional last step
   asks whether to turn the check on, where your business is based (GB or US)
   and, if your prospects are all in one country, which one (answering "no"
   there asks before saving it as Norway's code). It then offers a
-  free `PRECLEARED_API_KEY` (hidden input, saved to `.env`; 25 checks a day
+  free `REACHMAX_PRECLEARED_API_KEY` (hidden input, saved to `.env`; 25 checks a day
   instead of 10). Off unless you say yes. Re-running setup offers your saved
   answers as the defaults, so pressing Enter never switches the check off. The
   Claude-guided setup in CLAUDE.md offers the same step. Setup now reads and
-  saves `harvey.local.yaml` when it exists (it's what `harvey train` writes,
-  and the file Harvey reads), not the `harvey.yaml` it shadows, so its answers
+  saves `reachmax.local.yaml` when it exists (it's what `reachmax train` writes,
+  and the file Harvey reads), not the `reachmax.yaml` it shadows, so its answers
   take effect; if it can't save the file it says so instead of ticking the
   summary.
 - **Cohort builder pagination and CSV export.** The cohort table on the
@@ -640,7 +649,7 @@ minor versions can still change behaviour.
 ### Added
 
 - **Opt-in Codex brain (ChatGPT plan).** Set `brain.provider: codex` (or pick
-  it in `harvey setup`, or `harvey train --provider codex`) to think with the
+  it in `reachmax setup`, or `reachmax train --provider codex`) to think with the
   Codex CLI on a ChatGPT subscription instead of Claude. Claude remains the
   default and there is no automatic fallback between providers. Each call
   runs a throwaway, isolated `codex app-server` with no tools; Harvey verifies
@@ -652,7 +661,7 @@ minor versions can still change behaviour.
   `codex login`. Requires Codex CLI 0.159.3; other versions are refused. See
   the README section "Using a ChatGPT plan instead (Codex)".
 - `brain.model` picks the model for either provider, for Harvey only. For
-  Codex use `gpt-5.5` (suggested by `harvey setup`): the verified text-only
+  Codex use `gpt-5.5` (suggested by `reachmax setup`): the verified text-only
   model. Blank auto-selection only picks listed models without code-execution
   tools, and on current ChatGPT accounts there are none; code-mode models are
   refused.
@@ -660,8 +669,8 @@ minor versions can still change behaviour.
   unsafe Codex config, rejected model, plan usage limit), Harvey pauses the
   heartbeat instead of running agents that would fail: replies stay unread
   and unescalated, queued emails wait, and the reason shows in the log,
-  `harvey status` and the dashboard. It resumes on its own once the cause is
-  fixed. `harvey status --check` runs the same check (no prompt sent) on demand
+  `reachmax status` and the dashboard. It resumes on its own once the cause is
+  fixed. `reachmax status --check` runs the same check (no prompt sent) on demand
   and exits non-zero when it fails. The Codex provider supports macOS and
   Linux; it is refused on Windows (use Claude there).
 
@@ -677,7 +686,7 @@ minor versions can still change behaviour.
   written, so a brain outage part-way never half-records it. If a working
   brain returns no usable draft, the conversation is flagged for a human
   instead of being left open with no answer.
-- Usage is tracked per provider. The budget gate, `harvey usage`, `harvey
+- Usage is tracked per provider. The budget gate, `reachmax usage`, `reachmax
   status` and the dashboard read and label the active provider's own quota;
   existing usage history is kept and attributed to Claude.
 
@@ -704,8 +713,8 @@ A security release. Update if you run Harvey.
 
 ### Fixed
 
-- `harvey run` no longer drops into the setup wizard when the trained config
-  lives in `harvey.local.yaml`; the dashboard reads it too.
+- `reachmax run` no longer drops into the setup wizard when the trained config
+  lives in `reachmax.local.yaml`; the dashboard reads it too.
 - A heartbeat cycle is capped at 10 minutes, so one hung agent can't freeze
   Harvey, and quiet hours are re-checked every 5 minutes so a Mac waking from
   sleep resumes on time.
@@ -721,7 +730,7 @@ A security release. Update if you run Harvey.
 
 - Contacts are backfilled for companies found without any, from their own team
   pages and, if a key is set, Hunter's named-people search.
-- `HUNTER_MONTHLY_SEARCHES` (default 25) sets one Hunter budget shared by every
+- `REACHMAX_HUNTER_MONTHLY_SEARCHES` (default 25) sets one Hunter budget shared by every
   domain search.
 
 Thanks to [@sshaw0729-dotcom](https://github.com/sshaw0729-dotcom) for the
@@ -742,20 +751,20 @@ a paid third-party platform to send at all. Both are fixed.
   interface, shown side by side in the dashboard with what each does, what it
   costs, its free tier and which keys it needs. The default — OpenStreetMap —
   needs no account, no card and no key, so the whole pipeline can be run
-  before paying anyone. `harvey discover`.
+  before paying anyone. `reachmax discover`.
 - **Cost discipline in the collector.** Every discovery run estimates before it
   spends, refuses to start over your cap, re-checks the cap between batches,
   reads a kill switch, and flushes observations per batch so a run that dies
-  keeps what it learned. `harvey discover --estimate` prints the projection and
+  keeps what it learned. `reachmax discover --estimate` prints the projection and
   exits.
 - **PROFILE.** Free — three HTTP requests per business, no browser, no model
   call. Reads the incumbent agency out of the site footer, ad pixels, missing
   schema, abandoned blogs, open roles and named people. Chained onto DISCOVER
-  and run on every heartbeat. `harvey profile`.
+  and run on every heartbeat. `reachmax profile`.
 - **A signal catalog you confirm.** Harvey knows how to collect 23 signals and
   collects none of them until a human says so. Each shows a plain-language
   description, what it costs, and how many companies already carry it.
-  `harvey signals`.
+  `reachmax signals`.
 - **The cohort builder.** Pick what a prospect must have and what disqualifies
   them; see the matching companies live. A prospect list is a query you can
   explain, not a file.
@@ -767,12 +776,12 @@ a paid third-party platform to send at all. Both are fixed.
   too many links, HTML, undeliverable addresses and recipient mismatches.
 - **Bounce handling and a kill switch.** A bounce marks the address invalid,
   cancels that prospect's queued sends, and trips a global pause past a
-  configured bounce rate. `harvey sending pause|resume`.
+  configured bounce rate. `reachmax sending pause|resume`.
 - **Claude usage tracking.** Per-call attribution by agent, task and model, plus
   live subscription-quota gauges read the same way `/usage` does, so Harvey
   throttles itself and leaves headroom for your own interactive work.
-  `harvey usage`.
-- **CSV export.** `harvey export` writes a sequencer-ready list. Harvey is worth
+  `reachmax usage`.
+- **CSV export.** `reachmax export` writes a sequencer-ready list. Harvey is worth
   running as a list-builder even if you never let it send.
 - **A dashboard worth looking at.** Opens on Today — what needs a human — with
   an activity feed and a rail of pipeline figures, collector runs and setup.
@@ -798,7 +807,7 @@ a paid third-party platform to send at all. Both are fixed.
 - **Discovery depth defaults to 30, not 100.** Google removed
   100-results-per-page in September 2025, so depth 100 is now billed as ten
   pages nearly everywhere — and below rank 30 it is mostly directories.
-- **The dashboard's HTML, CSS and JS** are real files in `harvey/web/` instead
+- **The dashboard's HTML, CSS and JS** are real files in `reachmax/web/` instead
   of a 1,500-line string literal in `dashboard.py`. Still no build step.
 
 ### Fixed
@@ -826,7 +835,7 @@ a paid third-party platform to send at all. Both are fixed.
 
 - Test fixtures no longer carry real businesses' phone numbers or street
   addresses.
-- `harvey.local.yaml` (gitignored) overrides the tracked `harvey.yaml`, so a
+- `reachmax.local.yaml` (gitignored) overrides the tracked `reachmax.yaml`, so a
   fork can hold real product configuration without it reaching a public repo.
 
 ## [0.1.0]

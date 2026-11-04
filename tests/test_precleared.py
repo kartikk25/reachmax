@@ -15,11 +15,11 @@ import pytest
 import pytest_asyncio
 from pydantic import ValidationError
 
-from harvey.config import PreclearedConfig
-from harvey.integrations.precleared import SETTINGS_PREFIX, PreclearedClient
-from harvey.models.company import Company
-from harvey.models.prospect import COMPANY_INBOX_SOURCE, Prospect
-from harvey.state import StateManager
+from reachmax.config import PreclearedConfig
+from reachmax.integrations.precleared import SETTINGS_PREFIX, PreclearedClient
+from reachmax.models.company import Company
+from reachmax.models.prospect import COMPANY_INBOX_SOURCE, Prospect
+from reachmax.state import StateManager
 from tests.test_outbox_native import (
     Cfg,
     Env,
@@ -216,12 +216,12 @@ async def test_setting_prospect_country_forces_a_fresh_check_then_caches(state):
     assert calls[1]["json"]["default_recipient_country"] == "US"
 
 
-def test_prospect_country_loads_from_harvey_yaml(tmp_path):
+def test_prospect_country_loads_from_reachmax_yaml(tmp_path):
     import yaml
 
-    from harvey.config import load_config
+    from reachmax.config import load_config
 
-    path = tmp_path / "harvey.yaml"
+    path = tmp_path / "reachmax.yaml"
     path.write_text(yaml.safe_dump({
         "persona": {"name": "H", "company": "A", "role": "B",
                     "email": "h@a.com", "linkedin": "", "tone": "casual"},
@@ -335,8 +335,8 @@ async def test_a_new_confident_country_forces_one_fresh_check_then_caches(state)
 
 @pytest.mark.asyncio
 async def test_a_verdict_precleared_decided_for_the_same_country_is_kept(state):
-    # Cached before Harvey sent countries, with the one Precleared found
-    # itself: Harvey now knowing the same one asks the same question.
+    # Cached before Reach Max sent countries, with the one Precleared found
+    # itself: Reach Max now knowing the same one asks the same question.
     calls = []
     client = PreclearedClient("US", transport=mock_precleared(calls, FOUND_GB))
     await client.clear("jane@acme.com", state)
@@ -375,7 +375,7 @@ async def test_bad_country_values_are_dropped_not_raised(state, bad):
 
 
 @pytest.mark.asyncio
-async def test_names_are_sent_when_harvey_has_them(state):
+async def test_names_are_sent_when_reachmax_has_them(state):
     calls = []
     client = PreclearedClient("GB", transport=mock_precleared(calls, OK_BODY))
     await client.clear("jane@acme.com", state, company="Acme Widgets Ltd", name="Jane Doe")
@@ -450,7 +450,7 @@ async def test_a_verdict_with_names_keeps_the_country_precleared_found(state):
     client = PreclearedClient("GB", transport=mock_precleared(calls, FOUND_GB))
     await client.clear("jane@acme.com", state, company="Acme", name="Jane Doe")
     assert await client.known_country("jane@acme.com", state, company="Acme", name="Jane Doe") == "GB"
-    # Harvey later sure of the same country: the same question, still cached.
+    # Reach Max later sure of the same country: the same question, still cached.
     again = await client.clear("jane@acme.com", state, country="GB", company="Acme", name="Jane Doe")
     assert again.cached and len(calls) == 1
 
@@ -774,7 +774,7 @@ async def test_keyless_daily_limit_points_to_a_free_key(state):
     result = await client.clear("person@example.com", state)
 
     assert result.held and not result.allowed
-    assert "add PRECLEARED_API_KEY" in result.reason
+    assert "add REACHMAX_PRECLEARED_API_KEY" in result.reason
     assert "precleared.dev/get-key" in result.reason
 
 
@@ -792,8 +792,8 @@ async def test_key_out_of_checks_points_to_its_checkout_link_not_a_free_key(stat
     assert result.held and not result.allowed
     assert "pack" in result.reason
     assert f"({checkout})" in result.reason
-    assert "add PRECLEARED_API_KEY" not in result.reason
-    # Harvey's own wording, not the API's free text.
+    assert "add REACHMAX_PRECLEARED_API_KEY" not in result.reason
+    # Reach Max's own wording, not the API's free text.
     assert "Buy a pack to continue" not in result.reason
     # Nothing cached, so the next cycle asks again.
     assert await state.get_setting(SETTINGS_PREFIX + "person@example.com") == ""
@@ -826,7 +826,7 @@ async def test_key_out_of_checks_without_a_usable_link_falls_back_to_the_buy_pag
 
     assert result.held and not result.allowed
     assert "add a pack (https://precleared.dev/buy)" in result.reason
-    assert "add PRECLEARED_API_KEY" not in result.reason
+    assert "add REACHMAX_PRECLEARED_API_KEY" not in result.reason
     assert await state.get_setting(SETTINGS_PREFIX + "person@example.com") == ""
 
 
