@@ -807,7 +807,7 @@ class Sender:
         if self.mailbox_registry and self.config.channels.email.signature.logo:
             return "failed", "multi-mailbox sending requires plain text; disable channels.email.signature.logo"
         if item["kind"] == "sequence":
-            if self.mailbox_registry:
+            if getattr(self.config.channels.email, "mailboxes", None):
                 compliance = compliance_of(self.config)
                 missing = []
                 if not compliance.postal_address.strip():
