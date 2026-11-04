@@ -39,6 +39,25 @@ def test_mailbox_config_validates_sender_identity_and_limits():
             MailboxConfig(**broken)
 
 
+def test_mailbox_self_test_never_sends_if_inbox_check_fails():
+    from reachmax.integrations.mail_provider import test_mailbox_send
+
+    class OfflineProvider:
+        sent = False
+
+        async def test_connection(self):
+            return False, "private provider error"
+
+        async def send_email(self, *args, **kwargs):
+            self.sent = True
+            raise AssertionError("self-test must not send")
+
+    provider = OfflineProvider()
+    ok, detail = asyncio.run(test_mailbox_send(provider, "sender@example.test"))
+    assert not ok and not provider.sent
+    assert "private provider error" not in detail
+
+
 def test_send_failure_classification_separates_permanent_and_temporary_recipients():
     from reachmax.agents.sender import is_permanent_recipient_error
 

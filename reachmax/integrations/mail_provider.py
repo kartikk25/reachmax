@@ -154,16 +154,22 @@ async def test_mailbox_send(provider: MailProvider, address: str) -> tuple[bool,
     This deliberately sends a small internal message to the configured sender
     address. It contains no prospect data and is never sent to a lead.
     """
-    ok, _detail = await provider.test_connection()
+    try:
+        ok, _detail = await provider.test_connection()
+    except Exception:
+        return False, "Authentication or inbox access failed; no self-test was sent."
     if not ok:
         return False, "Authentication or inbox access failed; no message was sent."
     marker = secrets.token_urlsafe(8)
-    result = await provider.send_email(
-        address,
-        f"Reach Max mailbox self-test {marker}",
-        "This is an internal Reach Max mailbox connectivity check. "
-        "No prospect data is included.",
-    )
+    try:
+        result = await provider.send_email(
+            address,
+            f"Reach Max mailbox self-test {marker}",
+            "This is an internal Reach Max mailbox connectivity check. "
+            "No prospect data is included.",
+        )
+    except Exception:
+        return False, "Inbox access succeeded, but the provider failed during the self-test."
     if not result.ok:
         return False, "Inbox access succeeded, but the provider did not accept the self-test."
     return True, "Inbox access succeeded and the provider accepted a self-test to this mailbox; no prospect was contacted."
