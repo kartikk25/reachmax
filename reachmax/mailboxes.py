@@ -163,6 +163,18 @@ class MailboxRegistry:
             return used, last or datetime.min, mid
         return min(candidates, key=score)
 
+    async def assign(self, state, prospect, outbox_id: str,
+                     candidates: list[str], sent_today: dict[str, int] | None = None,
+                     last_sent_at: dict[str, datetime | None] | None = None) -> str | None:
+        """Keep an existing company/prospect sender; pick once for a new one."""
+        company = await state.get_company(prospect.company_id) if prospect.company_id else None
+        sticky = (getattr(company, "mailbox_id", None) or
+                  getattr(prospect, "mailbox_id", None))
+        chosen = sticky or self.pick(candidates, sent_today, last_sent_at)
+        if not chosen:
+            return None
+        return await state.assign_outbox_mailbox(prospect.id, outbox_id, chosen)
+
 
 def in_window_utc(now: datetime, zone: str, window: SendWindowConfig) -> bool:
     """Use the established DST-aware send-window implementation."""

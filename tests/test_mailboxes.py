@@ -5,6 +5,8 @@ from pydantic import ValidationError
 from reachmax.config import EmailChannelConfig, MailboxConfig, load_config
 from reachmax.mailboxes import MailboxRegistry, configured_mailboxes, mailbox_token_path
 from reachmax.state import MIGRATIONS, StateManager
+from reachmax.models.company import Company
+from reachmax.models.prospect import Prospect
 
 
 def mailbox(**overrides):
@@ -180,3 +182,26 @@ def test_registry_eligibility_enforces_status_cap_gap_and_window():
     assert not registry.eligible("sales_a", now, recipient,
                                  last_sent_at=now - timedelta(seconds=119))
     assert not registry.eligible("sales_a", now - timedelta(minutes=1), recipient)
+
+
+@pytest.mark.asyncio
+async def test_mailbox_assignment_is_sticky_at_company_level(tmp_path):
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    company = Company(name="Acme", domain="acme.test")
+    company_id = await state.add_company(company)
+    prospect_a = Prospect(company_id=company_id, first_name="Alex", last_name="A",
+                          email="alex@acme.test", title="CEO")
+    prospect_b = Prospect(company_id=company_id, first_name="Sam", last_name="B",
+                          email="sam@acme.test", title="CEO")
+    prospect_a.id = await state.add_prospect(prospect_a)
+    prospect_b.id = await state.add_prospect(prospect_b)
+    outbox_a = await state.add_outbox_item(prospect_id=prospect_a.id,
+        to_email=prospect_a.email, subject="One", body="", send_at="2026-01-01")
+    outbox_b = await state.add_outbox_item(prospect_id=prospect_b.id,
+        to_email=prospect_b.email, subject="Two", body="", send_at="2026-01-01")
+    assert await state.assign_outbox_mailbox(prospect_a.id, outbox_a, "sales_a") == "sales_a"
+    # Even when another mailbox is requested, the company identity wins.
+    assert await state.assign_outbox_mailbox(prospect_b.id, outbox_b, "sales_b") == "sales_a"
+    assert (await state.get_prospect(prospect_b.id)).mailbox_id == "sales_a"
+    assert (await state.get_outbox_item(outbox_b))["mailbox_id"] == "sales_a"

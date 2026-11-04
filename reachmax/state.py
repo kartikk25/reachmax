@@ -631,9 +631,13 @@ class StateManager:
                 for name in names:
                     if name not in present:
                         await db.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
-                await db.execute(
-                    f"UPDATE {table} SET mailbox_id = 'default' "
-                    "WHERE mailbox_id IS NULL OR mailbox_id = ''")
+                        # Backfill only on the one-time column addition. New
+                        # rows remain unassigned until the sender picks a pool
+                        # mailbox; repeating this on every init would erase
+                        # that distinction and reset assignments to default.
+                        await db.execute(
+                            f"UPDATE {table} SET mailbox_id = 'default' "
+                            "WHERE mailbox_id IS NULL OR mailbox_id = ''")
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_outbox_mailbox_status_send_at "
                 "ON outbox(mailbox_id, status, send_at)")
@@ -701,6 +705,46 @@ class StateManager:
             async with db.execute("SELECT * FROM mailboxes WHERE id=?", (mailbox_id,)) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
+
+    async def assign_outbox_mailbox(self, prospect_id: str, outbox_id: str,
+                                    mailbox_id: str) -> str | None:
+        """Atomically pin prospect, company, and queued row to one sender.
+
+        A prior company assignment always wins. None means the requested
+        assignment conflicted with an existing sticky identity.
+        """
+        await self.init_db()
+        async with self._connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(
+                "SELECT p.company_id, p.mailbox_id, c.mailbox_id "
+                "FROM prospects p LEFT JOIN companies c ON c.id=p.company_id WHERE p.id=?",
+                (prospect_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if not row:
+                await db.rollback()
+                return None
+            company_id, prospect_mailbox, company_mailbox = row
+            sticky = company_mailbox or prospect_mailbox
+            chosen = sticky or mailbox_id
+            await db.execute(
+                "UPDATE prospects SET mailbox_id=? WHERE id=? AND (mailbox_id IS NULL OR mailbox_id=?)",
+                (chosen, prospect_id, chosen))
+            if company_id:
+                await db.execute(
+                    "UPDATE companies SET mailbox_id=? WHERE id=? AND (mailbox_id IS NULL OR mailbox_id=?)",
+                    (chosen, company_id, chosen))
+            await db.execute(
+                "UPDATE outbox SET mailbox_id=? WHERE id=? AND (mailbox_id IS NULL OR mailbox_id=?)",
+                (chosen, outbox_id, chosen))
+            async with db.execute("SELECT mailbox_id FROM outbox WHERE id=?", (outbox_id,)) as cursor:
+                outbox_row = await cursor.fetchone()
+            if not outbox_row or outbox_row[0] != chosen:
+                await db.rollback()
+                return None
+            await db.commit()
+            return chosen
 
     async def record_mailbox_event(self, mailbox_id: str, kind: str,
                                    detail: str = "") -> None:
@@ -1138,6 +1182,7 @@ class StateManager:
         thread_ref: str = "",
         in_reply_to: str = "",
         approved_by: str = "",
+        mailbox_id: str | None = None,
     ) -> str | None:
         """Queue one outgoing email. Returns its id, or None when the
         (campaign, prospect, step) slot already exists — the double-send guard.
@@ -1148,12 +1193,12 @@ class StateManager:
                 """INSERT OR IGNORE INTO outbox
                    (id, campaign_id, prospect_id, conversation_id, step, kind,
                     to_email, subject, body, status, send_at, provider,
-                    thread_ref, in_reply_to)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    thread_ref, in_reply_to, mailbox_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     item_id, campaign_id, prospect_id, conversation_id,
                     int(step), kind, _norm(to_email), subject, body,
-                    status, send_at, provider, thread_ref, in_reply_to,
+                    status, send_at, provider, thread_ref, in_reply_to, mailbox_id,
                 ),
             )
             if cursor.rowcount > 0 and approved_by:
@@ -1306,7 +1351,7 @@ class StateManager:
 
     _OUTBOX_COLUMNS = frozenset({
         "status", "error", "message_id", "thread_ref", "sent_at",
-        "subject", "body", "send_at", "provider",
+        "subject", "body", "send_at", "provider", "mailbox_id",
     })
 
     async def update_outbox_item(self, item_id: str, **kwargs):
