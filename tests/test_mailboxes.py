@@ -64,7 +64,7 @@ def test_legacy_email_config_synthesizes_one_default_mailbox():
 async def test_mailbox_migration_backfills_legacy_rows_and_is_idempotent(tmp_path):
     db_path = tmp_path / "harvey-shaped.db"
     async with aiosqlite.connect(db_path) as db:
-        for script in MIGRATIONS[:-1]:
+        for script in MIGRATIONS[:14]:
             await db.executescript(script)
         await db.execute("PRAGMA user_version = 14")
         await db.execute("INSERT INTO companies(id, name) VALUES ('c1', 'Acme')")
@@ -111,6 +111,18 @@ async def test_registry_sync_updates_config_and_disables_removed_rows(tmp_path):
     async with aiosqlite.connect(state.db_path) as db:
         async with db.execute("SELECT kind, detail FROM mailbox_events WHERE mailbox_id='sales_a'") as cursor:
             assert await cursor.fetchone() == ("sent", "test history")
+
+
+@pytest.mark.asyncio
+async def test_mailbox_rate_limit_streak_resets_after_success(tmp_path):
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    await state.sync_mailboxes([MailboxConfig(**mailbox())])
+    await state.record_mailbox_event("sales_a", "rate_limited")
+    await state.record_mailbox_event("sales_a", "rate_limited")
+    assert await state.mailbox_rate_limit_attempts("sales_a") == 2
+    await state.record_mailbox_event("sales_a", "sent")
+    assert await state.mailbox_rate_limit_attempts("sales_a") == 0
 
 
 def test_mailbox_token_paths_are_distinct_and_reject_path_traversal(monkeypatch, tmp_path):

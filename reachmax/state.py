@@ -556,6 +556,10 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE mailboxes ADD COLUMN cooldown_until TIMESTAMP;
     """,
+    # ── v17: serialize per-mailbox send reservations ──
+    """
+    ALTER TABLE mailboxes ADD COLUMN last_send_reserved_at TIMESTAMP;
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -843,6 +847,22 @@ class StateManager:
                 "INSERT INTO mailbox_events(id, mailbox_id, kind, detail) VALUES (?, ?, 'rate_limited', ?)",
                 (str(uuid.uuid4()), mailbox_id, reason[:300]))
             await db.commit()
+
+    async def mailbox_rate_limit_attempts(self, mailbox_id: str) -> int:
+        """Count consecutive rate-limit events since the last successful send."""
+        attempts = 0
+        async with self._connect() as db:
+            async with db.execute(
+                "SELECT kind FROM mailbox_events WHERE mailbox_id=? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 100", (mailbox_id,)
+            ) as cursor:
+                async for row in cursor:
+                    kind = row[0]
+                    if kind == "sent":
+                        break
+                    if kind == "rate_limited":
+                        attempts += 1
+        return attempts
 
     async def set_mailbox_status(self, mailbox_id: str, status: str,
                                  reason: str = "", by: str = "user") -> bool:
@@ -1504,6 +1524,83 @@ class StateManager:
             )
             await db.commit()
             return cursor.rowcount == 1
+
+    async def claim_mailbox_sequence(self, item_id: str, mailbox_id: str, *,
+                                     daily_cap: int, day_start: str, day_end: str,
+                                     mailbox_gap_seconds: int,
+                                     global_gap_seconds: int,
+                                     now: datetime | None = None) -> bool:
+        """Atomically recheck mailbox cap/status/gaps and claim a cold send.
+
+        The send window is checked by the caller immediately before this call;
+        SQLite serializes overlapping workers for all persisted limits here.
+        """
+        instant = now or datetime.now(timezone.utc).replace(tzinfo=None)
+        if instant.tzinfo is not None:
+            instant = instant.astimezone(timezone.utc).replace(tzinfo=None)
+        stamp = instant.isoformat()
+        async with self._connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(
+                "SELECT status, cooldown_until, last_send_reserved_at FROM mailboxes WHERE id=?",
+                (mailbox_id,),
+            ) as cursor:
+                mailbox = await cursor.fetchone()
+            if not mailbox or mailbox[0] not in {"active", "warming"}:
+                await db.rollback()
+                return False
+            for previous, gap in ((mailbox[1], 0), (mailbox[2], mailbox_gap_seconds)):
+                if not previous or gap <= 0:
+                    continue
+                try:
+                    previous_dt = datetime.fromisoformat(previous)
+                    if previous_dt.tzinfo is not None:
+                        previous_dt = previous_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                    if (instant - previous_dt).total_seconds() < gap:
+                        await db.rollback()
+                        return False
+                except (TypeError, ValueError):
+                    pass
+            async with db.execute(
+                "SELECT COUNT(*) FROM outbox WHERE mailbox_id=? AND status='sent' "
+                "AND sent_at>=? AND sent_at<?", (mailbox_id, day_start, day_end)
+            ) as cursor:
+                sent_today = (await cursor.fetchone())[0]
+            if sent_today >= daily_cap:
+                await db.rollback()
+                return False
+            async with db.execute(
+                "SELECT value FROM settings WHERE key='last_global_cold_send_slot'"
+            ) as cursor:
+                slot = await cursor.fetchone()
+            if slot and slot[0]:
+                try:
+                    previous = datetime.fromisoformat(slot[0])
+                    if previous.tzinfo is not None:
+                        previous = previous.astimezone(timezone.utc).replace(tzinfo=None)
+                    if (instant - previous).total_seconds() < global_gap_seconds:
+                        await db.rollback()
+                        return False
+                except ValueError:
+                    pass
+            cursor = await db.execute(
+                "UPDATE outbox SET status='sending', updated_at=? WHERE id=? "
+                "AND status='approved' AND (send_at IS NULL OR send_at<=?)",
+                (stamp, item_id, stamp),
+            )
+            if cursor.rowcount != 1:
+                await db.rollback()
+                return False
+            await db.execute(
+                "INSERT INTO settings(key,value) VALUES('last_global_cold_send_slot',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (stamp,)
+            )
+            await db.execute(
+                "UPDATE mailboxes SET last_send_reserved_at=? WHERE id=?",
+                (stamp, mailbox_id),
+            )
+            await db.commit()
+            return True
 
     async def fail_stale_sending_outbox(
         self, older_than: timedelta = STALE_SENDING_AFTER

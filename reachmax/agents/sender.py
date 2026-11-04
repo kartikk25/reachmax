@@ -1092,13 +1092,27 @@ class Sender:
 
             # Claim it. A reply, bounce, hand send or rejection may have
             # cancelled it since the queue was read; then it stays cancelled.
-            if self.mailbox_registry and item["kind"] == "sequence":
-                minimum_gap = max(
-                    0, self.config.channels.email.send_interval_seconds
-                    - self.config.channels.email.send_jitter_seconds)
-                if not await self.state.reserve_global_send_slot(minimum_gap, _utcnow()):
-                    continue
-            if not await self.state.claim_outbox_item(item["id"]):
+            if self.mailbox_registry and item["kind"] == "sequence" and mailbox_id:
+                import pytz
+                operator_zone = pytz.timezone(operator_timezone(self.config))
+                now = _utcnow()
+                local_now = now.astimezone(operator_zone)
+                start = operator_zone.localize(datetime.combine(
+                    local_now.date(), datetime.min.time())).astimezone(timezone.utc)
+                end = operator_zone.localize(datetime.combine(
+                    local_now.date() + timedelta(days=1), datetime.min.time())).astimezone(timezone.utc)
+                minimum_gap = max(0, self.config.channels.email.send_interval_seconds
+                                  - self.config.channels.email.send_jitter_seconds)
+                cap = self.mailbox_registry.effective_cap(mailbox_id, local_now.date())
+                claimed = await self.state.claim_mailbox_sequence(
+                    item["id"], mailbox_id, daily_cap=cap,
+                    day_start=start.replace(tzinfo=None).isoformat(),
+                    day_end=end.replace(tzinfo=None).isoformat(),
+                    mailbox_gap_seconds=self.config.channels.email.min_gap_per_mailbox_seconds,
+                    global_gap_seconds=minimum_gap, now=now)
+            else:
+                claimed = await self.state.claim_outbox_item(item["id"])
+            if not claimed:
                 continue
             # Send the email as it is now, not as the queue read it: it may
             # have been edited and approved again since.
@@ -1136,16 +1150,31 @@ class Sender:
                 logger.warning(f"Sender: {result.error} — outbox is holding.")
                 break
             if not result.ok:
-                await self.state.update_outbox_item(
-                    item["id"], status="failed", error=result.error[:300]
-                )
                 if self.mailbox_registry and mailbox_id:
                     lower_error = result.error.lower()
                     if any(marker in lower_error for marker in ("401", "unauthorized", "invalid_grant", "auth failed")):
                         await self.state.set_mailbox_error(mailbox_id, result.error)
+                        await self.state.update_outbox_item(
+                            item["id"], status="approved", error=f"mailbox auth error: {result.error}"[:300]
+                        )
                     elif any(marker in lower_error for marker in ("429", "rate limit", "too many requests")):
-                        cooldown_until = (_utcnow() + timedelta(minutes=15)).isoformat()
+                        attempt = await self.state.mailbox_rate_limit_attempts(mailbox_id)
+                        delay_minutes = (5, 15, 60)[min(attempt, 2)]
+                        cooldown = _utcnow() + timedelta(minutes=delay_minutes)
+                        cooldown_until = cooldown.isoformat()
                         await self.state.set_mailbox_cooldown(mailbox_id, cooldown_until, result.error)
+                        await self.state.update_outbox_item(
+                            item["id"], status="approved", send_at=cooldown_until,
+                            error=f"provider rate limit; retry after {delay_minutes} minutes: {result.error}"[:300],
+                        )
+                    else:
+                        await self.state.update_outbox_item(
+                            item["id"], status="failed", error=result.error[:300]
+                        )
+                else:
+                    await self.state.update_outbox_item(
+                        item["id"], status="failed", error=result.error[:300]
+                    )
                 continue
 
             sent += 1
