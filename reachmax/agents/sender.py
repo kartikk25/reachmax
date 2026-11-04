@@ -770,6 +770,24 @@ class Sender:
             error=f"{RECHECK_PREFIX}{retry_at:%Y-%m-%d %H:%M} UTC: {reason}"[:300])
         return retry_at
 
+    async def _escalate_stale_reply(self, item: dict, reason: str) -> bool:
+        """Hand a reply back after its original mailbox has been unavailable for a day."""
+        if item.get("kind") != "reply" or not item.get("conversation_id"):
+            return False
+        try:
+            created = datetime.fromisoformat(str(item.get("created_at") or "").replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - created.astimezone(timezone.utc) < timedelta(hours=24):
+            return False
+        detail = f"Reply held for over 24 hours because its mailbox is unavailable: {reason}"[:300]
+        await self.state.update_outbox_item(item["id"], status="cancelled", error=detail)
+        await self.state.update_conversation(item["conversation_id"], status="needs_human")
+        logger.warning(f"Sender: handing reply {item['id']} to a human; mailbox unavailable for over 24 hours.")
+        return True
+
     async def _blocked(self, item: dict, prospect, allow_risky: bool) -> tuple[str, str] | None:
         """Why this email must not go out, as (status, error), or None."""
         await sync_sending_mode(self.config, self.state)   # "Turn off autopilot" counts at once
@@ -979,6 +997,9 @@ class Sender:
                 elif mailbox_id not in eligible_ids:
                     # Sticky follow-ups and replies remain queued until their
                     # original identity is eligible again.
+                    if await self._escalate_stale_reply(
+                            item, "paused, out of cap, outside its window, or cooling down"):
+                        continue
                     continue
                 if not mailbox_id:
                     continue
@@ -990,6 +1011,8 @@ class Sender:
                     send_provider = self.mailbox_registry.provider(mailbox_id)
                     self._mailbox_providers[mailbox_id] = send_provider
                 if send_provider is None or not send_provider.is_configured():
+                    if await self._escalate_stale_reply(item, "provider is not configured"):
+                        continue
                     continue
             order = await self._follow_up_order(item, prospect)
             if order == "wait":

@@ -271,3 +271,27 @@ async def test_a_fresh_claim_is_never_swept_whatever_the_timestamp_format(state)
         await db.commit()
     assert await state.fail_stale_sending_outbox() == 0
     assert (await state.get_outbox_item(item_id))["status"] == "sending"
+
+
+@pytest.mark.asyncio
+async def test_reply_waiting_over_24_hours_is_handed_back_to_a_human(state):
+    from reachmax.models.conversation import Conversation
+
+    pid = await seed_prospect(state, status="replied")
+    convo_id = await state.add_conversation(Conversation(id="", prospect_id=pid))
+    item_id = await state.add_outbox_item(
+        prospect_id=pid, to_email="jane@acme.com", subject="Re: hello",
+        body="Thanks for the note.", send_at=_now_iso(), status="approved",
+        kind="reply", conversation_id=convo_id,
+    )
+    async with state._connect() as db:
+        await db.execute("UPDATE outbox SET created_at=? WHERE id=?",
+                         ((datetime.now(timezone.utc) - timedelta(hours=25)).replace(tzinfo=None).isoformat(),
+                          item_id))
+        await db.commit()
+
+    sender = make_sender(state, FakeProvider())
+    item = await state.get_outbox_item(item_id)
+    assert await sender._escalate_stale_reply(item, "mailbox paused")
+    assert (await state.get_outbox_item(item_id))["status"] == "cancelled"
+    assert (await state.get_conversation(convo_id)).status == "needs_human"
