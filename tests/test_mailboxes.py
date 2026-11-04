@@ -1,3 +1,4 @@
+import asyncio
 import aiosqlite
 import pytest
 from pydantic import ValidationError
@@ -123,6 +124,33 @@ async def test_mailbox_rate_limit_streak_resets_after_success(tmp_path):
     assert await state.mailbox_rate_limit_attempts("sales_a") == 2
     await state.record_mailbox_event("sales_a", "sent")
     assert await state.mailbox_rate_limit_attempts("sales_a") == 0
+
+
+@pytest.mark.asyncio
+async def test_transactional_claim_reserves_daily_cap_across_workers(tmp_path):
+    from datetime import datetime, timedelta
+
+    state = StateManager(str(tmp_path / "reachmax.db"))
+    await state.init_db()
+    await state.sync_mailboxes([MailboxConfig(**mailbox())])
+    now = datetime.utcnow()
+    async with aiosqlite.connect(state.db_path) as db:
+        for item_id in ("out-a", "out-b"):
+            await db.execute(
+                "INSERT INTO outbox(id, status, send_at, mailbox_id) VALUES (?, 'approved', ?, 'sales_a')",
+                (item_id, (now - timedelta(seconds=1)).isoformat()),
+            )
+        await db.commit()
+
+    async def claim(item_id):
+        return await state.claim_mailbox_sequence(
+            item_id, "sales_a", daily_cap=1,
+            day_start=(now - timedelta(days=1)).isoformat(),
+            day_end=(now + timedelta(days=1)).isoformat(),
+            mailbox_gap_seconds=0, global_gap_seconds=0, now=now,
+        )
+
+    assert sum(await asyncio.gather(claim("out-a"), claim("out-b"))) == 1
 
 
 def test_mailbox_token_paths_are_distinct_and_reject_path_traversal(monkeypatch, tmp_path):

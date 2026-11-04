@@ -1562,8 +1562,10 @@ class StateManager:
                 except (TypeError, ValueError):
                     pass
             async with db.execute(
-                "SELECT COUNT(*) FROM outbox WHERE mailbox_id=? AND status='sent' "
-                "AND sent_at>=? AND sent_at<?", (mailbox_id, day_start, day_end)
+                "SELECT COUNT(*) FROM outbox WHERE mailbox_id=? AND ("
+                "(status='sent' AND sent_at>=? AND sent_at<?) OR "
+                "(status='sending' AND updated_at>=? AND updated_at<?))",
+                (mailbox_id, day_start, day_end, day_start, day_end)
             ) as cursor:
                 sent_today = (await cursor.fetchone())[0]
             if sent_today >= daily_cap:
