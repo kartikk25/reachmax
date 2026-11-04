@@ -475,7 +475,7 @@ async function loadMailboxes() {
         '<td>' + (100 * Number(m.reply_rate || 0)).toFixed(1) + '% (' + Number(m.reply_count || 0) + ')</td>' +
         '<td>' + (m.warmup_days_to_ramp ? Number(m.warmup_days_to_ramp) + ' days to ramp' : 'At current cap') + '</td>' +
         '<td>' + escHtml(m.next_send_slot || 'Open') + '</td><td>' +
-        '<button class="btn btn-secondary btn-sm" onclick="mailboxTest(' + jsq(m.id) + ')">Test</button> ' +
+        '<button class="btn btn-secondary btn-sm" title="Sends a self-test message to this mailbox only" onclick="mailboxTest(' + jsq(m.id) + ')">Self-test</button> ' +
         '<button class="btn btn-secondary btn-sm" onclick="mailboxEdit(' + jsq(m.id) + ',' + jsq(m.label) + ',' + jsq(m.from_name) + ',' + Number(m.max_daily_sends) + ',' + Number(m.weight || 1) + ',' + jsq(m.send_window && m.send_window.start || '05:00') + ',' + jsq(m.send_window && m.send_window.end || '17:00') + ',' + (m.enabled !== false) + ')">Edit</button> ' +
         (m.status === 'paused' || m.status === 'error' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'resume\')">Resume</button>' :
           m.status === 'active' || m.status === 'warming' ? '<button class="btn btn-secondary btn-sm" onclick="mailboxAction(' + jsq(m.id) + ',\'pause\')">Pause</button>' : '') + '</td></tr>').join('') +

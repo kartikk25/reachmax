@@ -78,12 +78,14 @@ commands still work without `--mailbox`.
 
 - `reachmax mailbox add` interactively adds a mailbox to the active YAML file.
 - `reachmax mailbox list` shows runtime state and daily sends.
-- `reachmax mailbox test <id>` checks the provider connection without sending
-  to a prospect.
+- `reachmax mailbox test <id>` checks inbox access and submits a tagged
+  self-test message to that mailbox's own address. It never contacts prospects.
 - `reachmax mailbox pause <id> [--reason ...]` and `resume <id>` control a
   sender; `remove <id>` disables it in YAML while preserving history.
 - The dashboard Mailboxes tab shows health, capacity, send windows, and recent
-  events. Its mailbox selector filters mailbox-aware pipeline screens.
+  events. Its Test action sends a uniquely tagged internal message to the
+  mailbox itself after checking inbox access; it never uses prospect data or
+  contacts a prospect. The mailbox selector filters mailbox-aware screens.
 
 Multi-mailbox cold sends are blocked until both
 `compliance.postal_address` and `compliance.opt_out_line` are configured.

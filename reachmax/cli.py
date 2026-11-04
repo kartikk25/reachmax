@@ -652,7 +652,8 @@ def cmd_mailbox(args):
             if not provider:
                 print(f"  {mailbox_id}: provider unavailable")
                 raise SystemExit(1)
-            ok, detail = await provider.test_connection()
+            from reachmax.integrations.mail_provider import test_mailbox_send
+            ok, detail = await test_mailbox_send(provider, mailbox.address)
             print(f"  {'✓' if ok else '✗'} {mailbox_id}: {detail}")
             if not ok:
                 raise SystemExit(1)

@@ -122,13 +122,24 @@ def test_mailbox_api_is_secret_free_and_can_pause_one_mailbox(authed, monkeypatc
     assert authed.post("/api/mailboxes/sales_a/resume").json()["status"] == "active"
 
     class FakeProvider:
+        sent = []
+
         async def test_connection(self):
             return True, "Connected; fake-secret-token"
 
+        async def send_email(self, to_email, subject, body, thread_ref="", in_reply_to=""):
+            from reachmax.integrations.mail_provider import SendResult
+            self.sent.append((to_email, subject, body))
+            return SendResult(ok=True, message_id="self-test-id")
+
+    fake_provider = FakeProvider()
     monkeypatch.setattr("reachmax.mailboxes.MailboxRegistry.provider",
-                        lambda *_args, **_kwargs: FakeProvider())
+                        lambda *_args, **_kwargs: fake_provider)
     tested = authed.post("/api/mailboxes/sales_a/test")
     assert tested.status_code == 200 and tested.json()["success"]
+    assert len(fake_provider.sent) == 1
+    assert fake_provider.sent[0][0] == "alex@example.test"
+    assert "no prospect" in tested.json()["detail"]
     assert "fake-secret-token" not in tested.text
 
 

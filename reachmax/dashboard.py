@@ -1374,7 +1374,7 @@ async def edit_mailbox(mailbox_id: str, request: Request):
 
 @app.post("/api/mailboxes/{mailbox_id}/test")
 async def test_mailbox_connection(mailbox_id: str):
-    """Check provider authentication/inbox access without sending a message."""
+    """Check inbox access and send a tagged test message only to the mailbox itself."""
     from reachmax.config import load_config
     from reachmax.mailboxes import MailboxRegistry
     state = _state()
@@ -1392,13 +1392,12 @@ async def test_mailbox_connection(mailbox_id: str):
         return JSONResponse({"success": False, "detail": "Mailbox is disabled or unavailable."},
                             status_code=409)
     try:
-        ok, _detail = await provider.test_connection()
+        from reachmax.integrations.mail_provider import test_mailbox_send
+        ok, detail = await test_mailbox_send(provider, registry.get(mailbox_id).address)
     except Exception:
         ok = False
-    return {"success": bool(ok), "detail": (
-        "Authentication and inbox access succeeded; no message was sent."
-        if ok else "Connection check failed. Review mailbox credentials and provider access."
-    )}
+        detail = "Mailbox test failed; check the provider configuration and logs."
+    return {"success": bool(ok), "detail": detail}
 
 
 @app.post("/api/mailboxes/{mailbox_id}/pause")

@@ -19,6 +19,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import secrets
 
 logger = logging.getLogger("reachmax.mail")
 
@@ -145,6 +146,27 @@ class MailProvider(ABC):
     @abstractmethod
     async def test_connection(self) -> tuple[bool, str]:
         """Cheap end-to-end credential check. Returns (ok, detail)."""
+
+
+async def test_mailbox_send(provider: MailProvider, address: str) -> tuple[bool, str]:
+    """Verify inbox access and outbound acceptance using only the mailbox itself.
+
+    This deliberately sends a small internal message to the configured sender
+    address. It contains no prospect data and is never sent to a lead.
+    """
+    ok, _detail = await provider.test_connection()
+    if not ok:
+        return False, "Authentication or inbox access failed; no message was sent."
+    marker = secrets.token_urlsafe(8)
+    result = await provider.send_email(
+        address,
+        f"Reach Max mailbox self-test {marker}",
+        "This is an internal Reach Max mailbox connectivity check. "
+        "No prospect data is included.",
+    )
+    if not result.ok:
+        return False, "Inbox access succeeded, but the provider did not accept the self-test."
+    return True, "Inbox access succeeded and the provider accepted a self-test to this mailbox; no prospect was contacted."
 
 
 def get_mail_provider(config, env, *, mailbox=None, token_file=None) -> MailProvider | None:

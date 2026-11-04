@@ -32,6 +32,7 @@ minor versions can still change behaviour.
 - Added CLI mailbox management, mailbox-specific environment examples, completed the multi-mailbox guide/README, validated mailbox/fixed timezone selection, and added per-mailbox authentication errors and rate-limit cooldowns. `pip install -e .`, CLI help/list, JavaScript syntax, and Python compilation pass; Docker verification is unavailable because Docker is not installed in this environment.
 - Final test run on Python 3.14: 2,829 passed, 184 skipped.
 - Follow-up fix: persist mailbox ids on new conversations and mailbox-related handler actions so dashboard filtering includes those records; focused regression run: 80 passed.
+- Mailbox self-test now verifies inbox access and provider send acceptance by sending a tagged message only to the mailbox's own address; the dashboard labels this action Self-test and the docs explain its effect. Full suite: 2,855 passed, 184 skipped.
 
 ### Added
 
