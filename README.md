@@ -1,6 +1,6 @@
 # Reach Max
 
-Reach Max is a fork of Harvey, originally published by ethanplusai under the MIT License.
+Reach Max is a local-first autonomous sales platform for finding, qualifying, and reaching prospective customers.
 
 **An autonomous sales agent that runs on your Claude Code or Codex subscription.**
 
@@ -37,7 +37,7 @@ confirmed signals, searching contacts, and the same screen in dark mode:
 ## Table of contents
 
 - [Why the subscription thing matters](#why-the-subscription-thing-matters)
-- [Where Reach Max adds value over Harvey](#where-reach-max-adds-value-over-harvey)
+- [Why Reach Max](#why-reach-max)
 - [What Reach Max actually does](#what-reachmax-actually-does)
 - [Quick start](#quick-start)
 - [You confirm what it looks for](#you-confirm-what-it-looks-for)
@@ -58,18 +58,17 @@ confirmed signals, searching contacts, and the same screen in dark mode:
 
 ---
 
-## Where Reach Max adds value over Harvey
+## Why Reach Max
 
-Reach Max is built on Harvey's MIT-licensed foundation. Its clearest added
-advantage is **native multi-mailbox outreach**: assign prospects to separate
-sender inboxes, configure each mailbox independently, and manage sending,
-reply handling, limits, and status from one local dashboard. That makes Reach
-Max a better fit for teams that need more than one sending inbox. If you only
-need a single mailbox, Harvey may be the simpler choice; Reach Max is not a
-claim that every workflow is better for every user.
+Reach Max brings prospect discovery, research, personalized outreach, reply
+handling, and campaign controls into one local application. Native
+multi-mailbox sending gives growing teams independent sender limits and
+credentials, stable mailbox assignment for follow-ups, and one dashboard for
+approvals and replies. It runs on your own machine with your provider login
+and mailbox credentials, keeping your prospect data and operating controls
+close to your team.
 
-To use Reach Max, clone this repository and follow [Quick start](#quick-start).
-It runs locally with your own provider login and mailbox credentials.
+Follow [Quick start](#quick-start) to start using Reach Max.
 
 ---
 
