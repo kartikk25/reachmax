@@ -68,7 +68,7 @@ MAX_RESULTS_PER_QUERY = 20
 # Serper free accounts reject num > 10 with HTTP 400
 # "Query pattern not allowed for free accounts" (verified 2026-10-26).
 SERPER_MAX_NUM = 10
-MAX_COMPANIES_PER_CYCLE = 10
+MAX_COMPANIES_PER_CYCLE = 20
 
 # Reading a company's site: the homepage, then up to five pages its own menu
 # links to (team, meet-the-doctors, about, contact...), never more than six
@@ -97,7 +97,7 @@ INBOX_PAGES = ("/contact", "/contact-us")
 INBOX_PREFERRED = ("owner", "office", "info", "contact", "contactus", "hello",
                    "team", "service", "sales", "estimates", "quotes",
                    "inquiries", "enquiries", "admin", "support")
-MAX_PROSPECTS_PER_CYCLE = 25
+MAX_PROSPECTS_PER_CYCLE = 50
 
 # Hunter domain-searches per heartbeat. The monthly budget itself is shared
 # with email-pattern lookups and set by REACHMAX_HUNTER_MONTHLY_SEARCHES (see

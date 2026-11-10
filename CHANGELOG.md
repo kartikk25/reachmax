@@ -10,6 +10,10 @@ and minor versions can still change behaviour.
 
 ### Reach Max fork
 
+- Set the default per-mailbox daily cap to 30, removed the single-mailbox
+  eight-send-per-cycle bottleneck, and increased the prospecting ceilings to
+  50 prospects per strategy and 20 companies per search/backfill batch.
+  Existing send pacing and follow-up schedules are retained.
 - Imported the MIT-licensed Harvey source into its own local Git history with
   no upstream remote. The Python package, CLI, configuration files, database,
   dashboard token, environment settings, and Docker image are Reach Max-specific.

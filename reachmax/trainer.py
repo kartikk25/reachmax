@@ -882,7 +882,7 @@ What prospects do instead of buying a solution like ours:
                 "email": {
                     "enabled": True,
                     "provider": "instantly",
-                    "max_daily_sends": 50,
+                    "max_daily_sends": 30,
                     # The trained site is yours: autopilot may link to it.
                     "link_domains": [email_domain],
                 },

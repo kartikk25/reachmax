@@ -41,9 +41,6 @@ MIN_FOLLOW_UP_GAP = timedelta(days=1)
 
 logger = logging.getLogger("reachmax.sender")
 
-# Max sends drained per heartbeat cycle — spreads volume through the day
-# instead of bursting the daily cap in one minute.
-MAX_SENDS_PER_CYCLE = 8
 # How many due emails quiet hours look through for one that can go now.
 QUIET_HOURS_SCAN = 200
 SEND_JITTER_SECONDS = (4, 15)
@@ -907,7 +904,10 @@ class Sender:
             # are not charged against those cold-email caps.
             budget = await self.state.count_due_approved_outbox(now)
         else:
-            budget = min(MAX_SENDS_PER_CYCLE, max_daily - sent_today)
+            budget = min(
+                await self.state.count_due_approved_outbox(now),
+                max_daily - sent_today,
+            )
         if budget <= 0:
             logger.info(f"Sender: daily send cap reached ({sent_today}/{max_daily}).")
             return
@@ -1360,9 +1360,9 @@ class Sender:
             # Human-ish pacing BETWEEN sends (not after the last, and never
             # in tests where pacing is disabled).
             if self.send_pacing and sent < budget:
-                interval = self.config.channels.email.send_interval_seconds
-                jitter = self.config.channels.email.send_jitter_seconds
                 if self.mailbox_registry:
+                    interval = self.config.channels.email.send_interval_seconds
+                    jitter = self.config.channels.email.send_jitter_seconds
                     await asyncio.sleep(random.uniform(max(0, interval - jitter), interval + jitter))
                 else:
                     await asyncio.sleep(random.uniform(*SEND_JITTER_SECONDS))

@@ -34,16 +34,16 @@ dependencies = [
     "uvicorn>=0.34,<1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kartikk25/reachmax"
+Issues = "https://github.com/kartikk25/reachmax/issues"
+Changelog = "https://github.com/kartikk25/reachmax/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<1",
 ]
-
-[project.urls]
-Homepage = "https://github.com/ethanplusai/harvey"
-Issues = "https://github.com/ethanplusai/harvey/issues"
-Changelog = "https://github.com/ethanplusai/harvey/blob/main/CHANGELOG.md"
 
 [project.scripts]
 reachmax = "reachmax.cli:main"

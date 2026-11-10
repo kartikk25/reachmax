@@ -225,7 +225,7 @@ class MailboxConfig(BaseModel):
     provider: str
     address: str
     from_name: str
-    max_daily_sends: int = 40
+    max_daily_sends: int = 30
     warmup: WarmupConfig = WarmupConfig()
     send_window: SendWindowConfig | None = None
     timezone: str = ""
@@ -362,7 +362,7 @@ class EmailChannelConfig(BaseModel):
     # "microsoft" (Microsoft 365 / Outlook via Graph), or "smtp" (any
     # SMTP+IMAP mailbox: AgentMail, Fastmail, ...)
     provider: str = "instantly"
-    max_daily_sends: int = 50
+    max_daily_sends: int = 30
     # When True, also send to catch-all ("risky") domains, not just verified
     # mailboxes. Off by default — catch-alls accept everything, so a bad
     # guess still bounces.
@@ -385,7 +385,7 @@ class EmailChannelConfig(BaseModel):
     # zone (see SendWindowConfig). None: no window, as before. Native
     # providers only; Instantly schedules its own sends.
     send_window: SendWindowConfig | None = SendWindowConfig()
-    # Multi-mailbox pacing applies across the entire sender pool.
+    # Human-like short delay between sends; retained for existing installs.
     send_interval_seconds: int = 15
     send_jitter_seconds: int = 4
     mailbox_strategy: str = "least_used"

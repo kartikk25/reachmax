@@ -37,7 +37,7 @@ def test_config_from_dict():
     assert config.persona.name == "Reach Max"
     assert config.product.name == "Widget"
     assert config.icp.industries == ["SaaS"]
-    assert config.channels.email.max_daily_sends == 50  # default
+    assert config.channels.email.max_daily_sends == 30  # default
     assert config.usage.heartbeat_interval_minutes == 15  # default
 
 

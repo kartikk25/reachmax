@@ -17,7 +17,7 @@ def mailbox(**overrides):
         "provider": "gmail",
         "address": "alex@example.com",
         "from_name": "Alex Rivera",
-        "max_daily_sends": 40,
+        "max_daily_sends": 30,
         **overrides,
     }
 
@@ -25,7 +25,7 @@ def mailbox(**overrides):
 def test_mailbox_config_validates_sender_identity_and_limits():
     item = MailboxConfig(**mailbox())
     assert item.address == "alex@example.com"
-    assert item.max_daily_sends == 40
+    assert item.max_daily_sends == 30
 
     for broken in (
         mailbox(id="Bad ID"),
@@ -37,6 +37,13 @@ def test_mailbox_config_validates_sender_identity_and_limits():
     ):
         with pytest.raises(ValidationError):
             MailboxConfig(**broken)
+
+
+def test_default_native_mailbox_cap_and_existing_send_interval():
+    email = EmailChannelConfig(provider="gmail")
+    assert email.max_daily_sends == 30
+    assert email.send_interval_seconds == 15
+    assert email.send_jitter_seconds == 4
 
 
 def test_mailbox_self_test_never_sends_if_inbox_check_fails():

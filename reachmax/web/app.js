@@ -526,7 +526,7 @@ async function mailboxAdd() {
   const address = (prompt('Sender email address:') || '').trim();
   const from_name = (prompt('Real sender name:') || '').trim();
   const provider = (prompt('Provider: gmail, microsoft, or smtp', 'gmail') || '').trim().toLowerCase();
-  const max_daily_sends = Number(prompt('Daily send cap:', '40'));
+  const max_daily_sends = Number(prompt('Daily send cap:', '30'));
   const startValue = prompt('Send window start:', '05:00');
   if (startValue === null) return;
   const endValue = prompt('Send window end:', '17:00');

@@ -48,14 +48,14 @@ channels:
   email:
     enabled: true
     provider: "gmail"          # gmail (recommended) | microsoft | smtp | instantly
-    max_daily_sends: 50
+    max_daily_sends: 30
     require_approval: true      # native: review in Outbox; Instantly: sending held
     # link_domains: ["mainsite.com"]   # your own sites besides the sending
     #                                  # domain and booking link; on autopilot,
     #                                  # an email linking elsewhere waits for you
     send_to_risky: false        # also send to catch-all domains (off = safest)
     max_bounce_rate: 0.05       # pause all sending if bounces exceed this
-    send_interval_seconds: 15   # one cold email across the whole mailbox pool
+    send_interval_seconds: 15   # short inter-send pacing for configured mailboxes
     send_jitter_seconds: 4
     mailbox_strategy: least_used # least_used | round_robin | weighted
     min_gap_per_mailbox_seconds: 120
@@ -72,7 +72,7 @@ channels:
     #     provider: gmail
     #     address: alex@example.com
     #     from_name: Alex Rivera
-    #     max_daily_sends: 40
+    #     max_daily_sends: 30
     #     weight: 1
     #     enabled: true
     #   - id: sales_b
@@ -80,7 +80,7 @@ channels:
     #     provider: microsoft
     #     address: sam@example.com
     #     from_name: Sam Patel
-    #     max_daily_sends: 40
+    #     max_daily_sends: 30
     #     weight: 1
     #     enabled: true
     # New sending domain? Set start_date to the day your warmup service went
@@ -92,10 +92,10 @@ channels:
     # Connect it (`reachmax trulyinbox connect`) and `reachmax warmup` reads
     # whether this mailbox is actually warmed.
     warmup:
-      start_date: ""            # YYYY-MM-DD; blank = no ramp
+      start_date: ""            # REQUIRED for a ramp: actual YYYY-MM-DD warmup began; blank = no ramp
       min_days: 14
-      start_sends: 5
-      daily_increase: 3
+      start_sends: 5             # 5 on first sending day
+      daily_increase: 5          # reaches the 30/day mailbox cap after 6 increases
       dkim_selector: ""         # only if your provider uses an unusual one
     # Send cold email only in office hours in each recipient's own time zone,
     # worked out from the company's location or the country Precleared finds.

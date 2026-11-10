@@ -570,7 +570,7 @@ def cmd_mailbox(args):
                 "address": input("Sender email address: ").strip(),
                 "from_name": input("Real sender name: ").strip(),
                 "provider": input("Provider (gmail/microsoft/smtp): ").strip().lower(),
-                "max_daily_sends": int(input("Daily cap [40]: ").strip() or "40"),
+                "max_daily_sends": int(input("Daily cap [30]: ").strip() or "30"),
             }
             from reachmax.config import MailboxConfig
             start = input(f"Send window start [{default_start}]: ").strip() or default_start

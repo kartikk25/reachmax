@@ -37,6 +37,7 @@ confirmed signals, searching contacts, and the same screen in dark mode:
 ## Table of contents
 
 - [Why the subscription thing matters](#why-the-subscription-thing-matters)
+- [Where Reach Max adds value over Harvey](#where-reach-max-adds-value-over-harvey)
 - [What Reach Max actually does](#what-reachmax-actually-does)
 - [Quick start](#quick-start)
 - [You confirm what it looks for](#you-confirm-what-it-looks-for)
@@ -54,6 +55,21 @@ confirmed signals, searching contacts, and the same screen in dark mode:
 - [Project structure](#project-structure)
 - [Philosophy](#philosophy)
 - [Roadmap](#roadmap)
+
+---
+
+## Where Reach Max adds value over Harvey
+
+Reach Max is built on Harvey's MIT-licensed foundation. Its clearest added
+advantage is **native multi-mailbox outreach**: assign prospects to separate
+sender inboxes, configure each mailbox independently, and manage sending,
+reply handling, limits, and status from one local dashboard. That makes Reach
+Max a better fit for teams that need more than one sending inbox. If you only
+need a single mailbox, Harvey may be the simpler choice; Reach Max is not a
+claim that every workflow is better for every user.
+
+To use Reach Max, clone this repository and follow [Quick start](#quick-start).
+It runs locally with your own provider login and mailbox credentials.
 
 ---
 
@@ -119,7 +135,7 @@ Profiling and outbox draining ride along on **every** cycle regardless, because 
 ### Easiest: let Claude set it up
 
 ```bash
-git clone https://github.com/ethanplusai/harvey.git reachmax
+git clone https://github.com/kartikk25/reachmax.git
 cd reachmax
 claude
 ```
@@ -160,7 +176,7 @@ above on macOS or Windows. On a remote Linux host, reach the dashboard through
 an SSH tunnel rather than exposing its port to the network.
 
 ```bash
-git clone https://github.com/ethanplusai/harvey.git reachmax
+git clone https://github.com/kartikk25/reachmax.git
 cd reachmax
 
 # Create the credentials file only if you do not already have one.
@@ -727,7 +743,7 @@ your explicit choice.
 1. Buy a **dedicated sending domain** (`getacme.com`, not `acme.com`).
 2. Set up **SPF, DKIM and DMARC** on it. Without all three, Gmail junks you. `reachmax warmup` checks them, plus domain age, blocklists, your warmup progress and bounce rate, and ends with READY / NOT READY. It only reads public DNS and Reach Max's own records.
 3. **Warm up for 2–4 weeks** before real volume, and keep warmup running after. We recommend [TrulyInbox](https://trulyinbox.com/?via=reachmax); see [Warmup with TrulyInbox](#warmup-with-trulyinbox).
-4. **Ramp slowly** — 10–20/day per inbox, adding ~5/day. The `max_daily_sends: 50` default is a ceiling, not a target. Set `channels.email.warmup.start_date` and Reach Max does this for you (Gmail, Microsoft, SMTP; Instantly has its own warmup): no cold email for `min_days`, then a cold-email cap that climbs by `daily_increase` a day. Replies always go out.
+4. **Ramp slowly.** The default `max_daily_sends: 30` is a software ceiling, not a provider-approved safe volume or starting target. Set `channels.email.warmup.start_date` to enable Reach Max's configured ramp (Gmail, Microsoft, SMTP; Instantly has its own warmup): no cold email for `min_days`, then a cap that climbs by `daily_increase` a day. If `start_date` is blank, no ramp applies. Replies are not held by the cold-email cap.
 5. **Watch bounces.** Above ~3%, stop and fix list quality. Reach Max trips its own kill switch past your configured threshold.
 
 *None of this is legal advice. Sending at scale or into regulated industries? Talk to a lawyer.*

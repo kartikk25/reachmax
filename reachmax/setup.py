@@ -559,7 +559,7 @@ class SetupWizard:
                 "email": {
                     "enabled": True,
                     "provider": "instantly",
-                    "max_daily_sends": 50,
+                    "max_daily_sends": 30,
                 },
                 "linkedin": {
                     "enabled": bool(self.env_vars.get("REACHMAX_LINKEDIN_EMAIL")),
@@ -795,7 +795,7 @@ class SetupWizard:
                     if "email" in self.config["channels"]:
                         existing["channels"].setdefault("email", {})
                         existing["channels"]["email"]["max_daily_sends"] = (
-                            self.config["channels"]["email"].get("max_daily_sends", 50)
+                            self.config["channels"]["email"].get("max_daily_sends", 30)
                         )
                 if self.precleared:
                     _save_precleared(existing, self.precleared)

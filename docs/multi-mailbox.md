@@ -36,7 +36,7 @@ channels:
         provider: gmail
         address: alex@example.com
         from_name: Alex Rivera
-        max_daily_sends: 40
+        max_daily_sends: 30
         weight: 1
         enabled: true
 ```
@@ -56,6 +56,13 @@ window. Use `timezone_mode: mailbox` with a mailbox IANA time zone, or
 `timezone_mode: fixed` with a fixed IANA time zone. Replies bypass cold-email
 windows and warmup caps. A mailbox remains sticky to its prospect and company;
 queued follow-ups wait if that sender is paused or ineligible.
+
+The default cold-email cap is 30 per mailbox, not a provider-approved safe
+volume. The sender drains all due, approved emails each cycle, subject to
+mailbox caps, send windows, and the configured short inter-send pacing.
+Follow-ups keep their existing schedule and minimum delay. The legacy
+Instantly campaign provider uses its own campaign pacing. Warmup caps apply
+only when `warmup.start_date` is set.
 
 The sender list is synced into `data/reachmax.db`. Removing or disabling an id
 preserves its history. Existing records receive the `default` mailbox id when

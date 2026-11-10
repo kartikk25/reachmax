@@ -202,6 +202,32 @@ async def test_stage_campaign_renders_and_respects_approval(state):
 
 
 @pytest.mark.asyncio
+async def test_single_mailbox_drains_all_due_approved_items_within_daily_cap(state):
+    from reachmax.models.company import Company
+
+    provider = FakeProvider()
+    sender = make_sender(state, provider)
+    sender.config.channels.email.max_daily_sends = 30
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for index in range(10):
+        company_id = await state.add_company(
+            Company(name=f"Company {index}", domain=f"company{index}.example"))
+        prospect_id = await state.add_prospect(Prospect(
+            company_id=company_id, first_name="Jane", last_name="Smith",
+            email=f"jane{index}@company{index}.example", email_status="verified"))
+        await state.add_outbox_item(
+            prospect_id=prospect_id, to_email=f"jane{index}@company{index}.example",
+            subject="A quick question", body="Could I ask?",
+            send_at=(now - timedelta(minutes=1)).isoformat(), status="approved",
+            campaign_id="single-mailbox-drain", step=1)
+
+    await sender._drain_due()
+
+    assert len(provider.sent) == 10
+    assert len(await state.get_outbox(status="sent")) == 10
+
+
+@pytest.mark.asyncio
 async def test_stage_skips_unverified(state):
     pid = await seed_prospect(state, email="guess@acme.com", estatus="guess")
     await seed_campaign(state, [pid])
