@@ -12,7 +12,7 @@ The unusual part: **there is no model API bill.** Reach Max uses your Claude Pro
 $ reachmax run
 
 ============================================================
-Reach Max is online. Always Be Closing.
+Reach Max is online. Sales, under your control.
 ============================================================
 Checking pipeline state...
 Decision: write_campaign (3 new prospects with no drafts)
@@ -23,14 +23,12 @@ Decision: write_campaign (3 new prospects with no drafts)
 Cycle complete. Sleeping for 15 minutes.
 ```
 
-And the dashboard it keeps, at `localhost:5556`. In this order: the Today screen, a
-conversation Reach Max handed back because a prospect asked for a contract, approving
-a drafted reply from the outbox, confirming a signal, building a cohort from
-confirmed signals, searching contacts, and the same screen in dark mode:
+Reach Max's local dashboard runs at `127.0.0.1:5556`. Here's a preview of its
+Today screen with fictional sample data:
 
-![Reach Max's dashboard: the Today screen, a conversation handed back for a human, approving a reply in the outbox, confirming a signal and building a cohort, searching contacts, then dark mode](docs/dashboard.gif)
+![Reach Max dashboard preview showing its Today screen, outreach queue, and pipeline status](docs/dashboard.svg)
 
-<sub>The demo data is invented: "Bookwell" selling online booking to roofers, dental practices and HVAC shops, on `.test` domains.</sub>
+<sub>All names and counts in the preview are fictional.</sub>
 
 ---
 
@@ -556,11 +554,6 @@ reachmax dashboard     # prints the link to open, e.g. http://127.0.0.1:5556/#to
 
 Plain HTML, CSS and JavaScript served from `reachmax/web/`. No build step, no framework, no bundler — edit `app.css` and reload. Fonts are vendored, so it renders correctly with the network off.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
-  <img alt="The Today screen: four headline figures with 14-day trends, the list of things waiting on you, contacts by stage, and collector runs" src="docs/screenshots/today-light.png">
-</picture>
-
 The sidebar is grouped by what you're doing: **Work** (what needs you), **Pipeline** (what Reach Max is building) and **System** (how it's running). Counts next to a tab mean something is waiting there.
 
 **Work**
@@ -576,10 +569,6 @@ The sidebar is grouped by what you're doing: **Work** (what needs you), **Pipeli
 
 **System**
 - **Activity**, **Usage**, **Controls**, **Settings**, **Help**. Usage shows Claude or Codex quota gauges and per-agent token counts, with no dollar figures: you're on a subscription and aren't billed per token, so showing costs would be made up.
-
-| Outbox | Conversations |
-|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/outbox-dark.png"><img alt="The outbox decisions desk: a drafted reply to an objection, with the company, contact, verification and signals beside it" src="docs/screenshots/outbox-light.png"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/conversations-dark.png"><img alt="A conversation Reach Max handed back: the two emails sent, the prospect asking for a contract, and the Hand back to Reach Max and Close buttons" src="docs/screenshots/conversations-light.png"></picture> |
 
 Colour is kept for meaning. The chrome is neutral and a single blue marks what you can act on. Status (waiting on you, done, failed, running) uses the same small set of tones in every tab, so "waiting on you" looks the same wherever it shows up. Figures are tabular, so columns line up and a changing number doesn't shift the layout.
 
